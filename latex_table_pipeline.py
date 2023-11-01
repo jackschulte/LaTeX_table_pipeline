@@ -44,7 +44,14 @@ def write(param_arr,file):
         file.write(ii)
     file.write(r'\\'+'\n')
 
-def med_table(target_list, path, file_prefix = '.MIST.SED.'):
+def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.'):
+
+    '''
+    target_list: an array of strings containing the names of each target. Names should match those in EXOFASTv2 output files.
+    path: path of EXOFASTv2 output files
+    file_prefix: prefix used in EXOFASTv2 file generation
+    outputpath: the folder in which the table should be generated. Current working directory by default
+    '''
 
     # set which parameters to output to the .tex file
 
@@ -121,11 +128,14 @@ def med_table(target_list, path, file_prefix = '.MIST.SED.'):
     ps=False
     psg=False
 
+    if os.path.exists(outputpath) == False:
+        os.mkdir(outputpath)
+
     newfile = 'median_table.tex'
 
     # if this file exists, come up with a new name
     i = 2
-    while os.path.exists(newfile):
+    while os.path.exists(f'{outputpath}/{newfile}'):
         newfile = 'median_table_' + str(i) + '.tex'
         i += 1
     print(f'Saving this table as {newfile}...')
@@ -354,7 +364,7 @@ def med_table(target_list, path, file_prefix = '.MIST.SED.'):
         namestring += (' & ' + target_list[ii])
     
 
-    with open(newfile, 'w') as fout: 
+    with open(f'{outputpath}/{newfile}', 'w') as fout: 
         fout.write(r'\providecommand{\bjdtdb}{\ensuremath{\rm {BJD_{TDB}}}}'+'\n'+
     r'\providecommand{\feh}{\ensuremath{\left[{\rm Fe}/{\rm H}\right]}}'+'\n'+
     r'\providecommand{\teff}{\ensuremath{T_{\rm eff}}}'+'\n'+
