@@ -123,11 +123,12 @@ def med_table(target_list, path, file_prefix = '.MIST.SED.'):
 
     newfile = 'median_table.tex'
 
-    i = 1
+    # if this file exists, come up with a new name
+    i = 2
     while os.path.exists(newfile):
         newfile = 'median_table_' + str(i) + '.tex'
         i += 1
-
+    print(f'Saving this table as {newfile}...')
     
     mstars=[r'~~~~$M_*$\dotfill &Mass (\msun)\dotfill ']
     rstars=[r'~~~~$R_*$\dotfill &Radius (\rsun)\dotfill ']
@@ -384,7 +385,7 @@ def med_table(target_list, path, file_prefix = '.MIST.SED.'):
     r'\startdata'+'\n'+
     #r'\hline \\' + '\n' + 
     #r'\hline \\' + '\n' + 
-    r'\multicolumn{2}{l}{Priors:} ' + namestring + r'\\' + '\n' + ###########put k2 ids here
+    r'\multicolumn{2}{l}{Priors:} ' + namestring + r'\\' + '\n' +
     r'\hline \\' + '\n' +
     r'Gaussian & $\pi$ Gaia Parallax (mas) \dotfill & \\'  + '\n' +
     r'Gaussian & $[{\rm Fe/H}]$ Metallicity (dex) \dotfill & \\' + '\n' +
