@@ -128,6 +128,8 @@ def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.'):
     ps=False
     psg=False
 
+    # Setting up to save the table as a .tex file
+
     if os.path.exists(outputpath) == False:
         os.mkdir(outputpath)
 
@@ -139,6 +141,8 @@ def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.'):
         newfile = 'median_table_' + str(i) + '.tex'
         i += 1
     print(f'Saving this table as {newfile}...')
+
+    # Initializing strings with LaTeX for each parameter
     
     mstars=[r'~~~~$M_*$\dotfill &Mass (\msun)\dotfill ']
     rstars=[r'~~~~$R_*$\dotfill &Radius (\rsun)\dotfill ']
@@ -364,6 +368,8 @@ def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.'):
         namestring += (' & ' + target_list[ii])
     
 
+    # Generating the preamble
+    
     with open(f'{outputpath}/{newfile}', 'w') as fout: 
         fout.write(r'\providecommand{\bjdtdb}{\ensuremath{\rm {BJD_{TDB}}}}'+'\n'+
     r'\providecommand{\feh}{\ensuremath{\left[{\rm Fe}/{\rm H}\right]}}'+'\n'+
