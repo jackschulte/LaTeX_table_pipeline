@@ -176,7 +176,7 @@ def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.'):
     ps=[r'~~~~$R_P/R_*$\dotfill &Radius of planet in stellar radii \dotfill ']
     ars=[r'~~~~$a/R_*$\dotfill &Semi-major axis in stellar radii \dotfill ']
     deltas=[r'~~~~$\delta$\dotfill &$\left(R_P/R_*\right)^2$ \dotfill ']
-    Tdepths=[r'~~~~$Depth_\rm{TESS}$\dotfill &Flux decrement at mid transit for \tess \dotfill ']
+    Tdepths=[r'~~~~$Depth_\rm{TESS}$\dotfill &Flux decrement at mid-transit for \tess \dotfill ']
     taus=[r'~~~~$\tau$\dotfill &Ingress/egress transit duration (days)\dotfill ']
     t14s=[r'~~~~$T_{14}$\dotfill &Total transit duration (days)\dotfill ']
     tfwhms=[r'~~~~$T_{FWHM}$\dotfill &FWHM transit duration (days)\dotfill ']
@@ -205,7 +205,7 @@ def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.'):
     #sesinws=[r'']
     msinis=[r'~~~~$M_P\sin i$\dotfill &Minimum mass (\mj)\dotfill ']
     qs=[r'~~~~$M_P/M_*$\dotfill &Mass ratio \dotfill ']
-    drs=[r'~~~~$d/R_*$\dotfill &Separation at mid transit \dotfill ']
+    drs=[r'~~~~$d/R_*$\dotfill &Separation at mid-transit \dotfill ']
     pts=[r'~~~~$P_T$\dotfill &A priori non-grazing transit prob \dotfill ']
     ptgs=[r'~~~~$P_{T,G}$\dotfill &A priori transit prob \dotfill ']
     pss=[r'~~~~$P_S$\dotfill &A priori non-grazing eclipse prob ']
@@ -380,6 +380,7 @@ def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.'):
     r'\providecommand{\re}{\ensuremath{\,R_{\rm E}}}'+'\n'+
     r'\providecommand{\fave}{\langle F \rangle}'+'\n'+
     r'\providecommand{\fluxcgs}{10$^9$ erg s$^{-1}$ cm$^{-2}$}'+'\n'+
+    r'\providecommand{\tess}{\textit{TESS}\xspace}'+'\n'+
     r'\startlongtable'+ '\n'+
     r'\begin{deluxetable*}{' + colstring +'}\n'+
     r'\clearpage'+'\n'+
