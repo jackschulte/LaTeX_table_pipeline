@@ -27,13 +27,13 @@ def make_string(medians, param, array):
 
     if medians.parname.isin([param]).any() == True:
     
-        uperr = float(medians.upper_error[medians.parname == param])
-        loerr = float(medians.lower_error[medians.parname == param])
+        uperr = medians.upper_error[medians.parname == param].iloc[0]
+        loerr = medians.lower_error[medians.parname == param].iloc[0]
         if uperr==loerr:
             errstring = r'\pm ' + str(uperr)
         else:
             errstring = r'^{+'+ str(uperr) + '}_{-' + str(loerr) + '}'
-        array.append('& $' + str(float(medians.median_value[medians.parname == param])))
+        array.append('& $' + str(medians.median_value[medians.parname == param].iloc[0]))
         #if ii<len(paths)-1:
         array.append(errstring + '$ ')
     else:
@@ -60,7 +60,7 @@ def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.'):
     Rstar=True
     RstarSED=False
     Lstar=True
-    fbol=True
+    fbol=False
     rhostar=True
     logg=True
     teff=True
@@ -71,8 +71,8 @@ def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.'):
     eep=True
     logmstar=False
     Av=True
-    errscale=True
-    parallax=True
+    errscale=False
+    parallax=False # the GAIA parralax is already in the literature table
     distance=True
 
     # Planetary parameters
@@ -81,7 +81,7 @@ def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.'):
     mp=True
     mpsun=False #nor sure what the problem is with this
     tc=True
-    tt=True
+    tt=False
     t0=True
     semimajor=True
     ideg=True
@@ -92,7 +92,7 @@ def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.'):
     k=True
     p=True
     ar=True
-    delta=True
+    delta=False
     depthTESS=True
     tau=True
     t14=True
@@ -101,7 +101,8 @@ def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.'):
     cosi=False #nor sure what the problem is with this
     bs=True
     taus=False
-    ts14=True
+    ts=False # maybe include this and ts14?
+    ts14=False
     tfwhms=False
     depth25=False
     depth50=False
@@ -112,12 +113,11 @@ def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.'):
     safronov=False
     fave=False
     tp=False
-    ts=True
     ta=False
     td=False
     vcve=False
-    ecosw=True
-    esinw=True
+    ecosw=False
+    esinw=False
     #secosw=True
     #sesinw=True
     msini=False
@@ -146,17 +146,17 @@ def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.'):
     
     mstars=[r'$M_*$ & Mass (\msun) ']
     rstars=[r'$R_*$ & Radius (\rsun) ']
-    rstarseds=[r'$R_{*,SED}$ & Radius$^{1}$ (\rsun) ']
+    rstarseds=[r'$R_{*,SED}$ & Radius$ (\rsun) ']
     lstars=[r'$L_*$ & Luminosity (\lsun) ']
-    fbols=[r'$F_{Bol}$ & Bolometric Flux (cgs) ']
+    fbols=[r'$F_{Bol}$ & Bolometric flux (cgs) ']
     rhostars=[r'$\rho_*$ & Density (cgs) ']
     loggs=[r'$\log{g}$ & Surface gravity (cgs) ']
-    teffs=[r'$T_{\rm eff}$ & Effective Temperature (K) ']
-    teffseds=[r'$T_{\rm eff,SED}$ & Effective Temperature$^{1}$ (K) ']
+    teffs=[r'$T_{\rm eff}$ & Effective temperature (K) ']
+    teffseds=[r'$T_{\rm eff,SED}$ & Effective temperature (K) ']
     fehs=[r'$[{\rm Fe/H}]$ & Metallicity (dex) ']
-    initfehs=[r'$[{\rm Fe/H}]_{0}$ & Initial Metallicity$^{2}$  ']
+    initfehs=[r'$[{\rm Fe/H}]_{0}$ & Initial metallicity ']
     ages=[r'$Age$ & Age (Gyr) ']
-    eeps=[r'$EEP$ & Equal Evolutionary Phase$^{3}$  ']
+    eeps=[r'$EEP$ & Equal evolutionary phase ']
     logmstars=[r'$\log{M_*}$ & Mass ($\log{\msun}$) ']
     avs=[r'$A_V$ & V-band extinction (mag) ']
     errscales=[r'$\sigma_{SED}$ & SED photometry error scaling ']
@@ -167,26 +167,26 @@ def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.'):
     rps=[r'$R_P$ & Radius (\rj) ']
     mps=[r'$M_P$ & Mass (\mj) ']
     mpsuns=[r'$M_P$ & Mass (\msun) ']
-    tcs=[r'$T_C$ & Time of conjunction$^{4}$ (\bjdtdb) ']
-    tts=[r'$T_T$ & Time of minimum projected separation$^{5}$ (\bjdtdb) ']
-    t0s=[r'$T_0$ & Optimal conjunction Time$^{6}$ (\bjdtdb) ']
+    tcs=[r'$T_C$ & Time of conjunction (\bjdtdb) ']
+    tts=[r'$T_T$ & Time of minimum projected separation (\bjdtdb) ']
+    t0s=[r'$T_0$ & Optimal conjunction time (\bjdtdb) ']
     semimajors=[r'$a$ & Semi-major axis (AU) ']
     idegs=[r'$i$ & Inclination (Degrees) ']
-    eccs=[r'$e$ & Eccentricity  ']
-    odegs=[r'$\omega_*$ & Argument of Periastron (Degrees) ']
-    teqs=[r'$T_{eq}$ & Equilibrium temperature$^{7}$ (K) ']
+    eccs=[r'$e$ & Eccentricity ']
+    odegs=[r'$\omega_*$ & Argument of periastron (Degrees) ']
+    teqs=[r'$T_{eq}$ & Equilibrium temperature (K) ']
     tcircs=[r'$\tau_{\rm circ}$ & Tidal circularization timescale (Gyr) ']
     ks=[r'$K$ & RV semi-amplitude (m/s) ']
     ps=[r'$R_P/R_*$ & Radius of planet in stellar radii  ']
     ars=[r'$a/R_*$ & Semi-major axis in stellar radii  ']
-    deltas=[r'$\delta$ & $\left(R_P/R_*\right)^2$  ']
-    Tdepths=[r'$Depth_\rm{TESS}$ & Flux decrement at mid-transit for \tess  ']
+    deltas=[r'$\delta$ & $\left(R_P/R_*\right)^2$ ']
+    Tdepths=[r'$Depth$ & \tess flux decrement at mid-transit ']
     taus=[r'$\tau$ & Ingress/egress transit duration (days) ']
     t14s=[r'$T_{14}$ & Total transit duration (days) ']
     tfwhms=[r'$T_{FWHM}$ & FWHM transit duration (days) ']
-    bs=[r'$b$ & Transit Impact parameter  ']
-    cosis=[r'$\cos i$ & Cos of Inclination ']
-    bss=[r'$b_S$ & Eclipse impact parameter  ']
+    bs=[r'$b$ & Transit impact parameter ']
+    cosis=[r'$\cos i$ & Cosine of inclination ']
+    bss=[r'$b_S$ & Eclipse impact parameter ']
     tauss=[r'$\tau_S$ & Ingress/egress eclipse duration (days) ']
     ts14s=[r'$T_{S,14}$ & Total eclipse duration (days) ']
     tfwhmss=[r'$T_{S,FWHM}$ & FWHM eclipse duration (days) ']
@@ -196,12 +196,12 @@ def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.'):
     rhops=[r'$\rho_P$ & Density (cgs) ']
     #logps=[r'']
     loggps=[r'$logg_P$ & Surface gravity  ']
-    safronovs=[r'$\Theta$ & Safronov Number  ']
-    faves=[r'$\fave$ & Incident Flux (\fluxcgs) ']
-    tps=[r'$T_P$ & Time of Periastron (\bjdtdb) ']
+    safronovs=[r'$\Theta$ & Safronov number ']
+    faves=[r'$\fave$ & Incident flux (\fluxcgs) ']
+    tps=[r'$T_P$ & Time of periastron (\bjdtdb) ']
     tss=[r'$T_S$ & Time of eclipse (\bjdtdb) ']
-    tas=[r'$T_A$ & Time of Ascending Node (\bjdtdb) ']
-    tds=[r'$T_D$ & Time of Descending Node (\bjdtdb) ']
+    tas=[r'$T_A$ & Time of ascending node (\bjdtdb) ']
+    tds=[r'$T_D$ & Time of descending node (\bjdtdb) ']
     vcves=[r'$V_c/V_e$ ']
     ecosws=[r'$e\cos{\omega_*}$ & ']
     esinws=[r'$e\sin{\omega_*}$ & ']
@@ -393,11 +393,11 @@ def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.'):
     #r'\hline \\' + '\n' + 
     #r'\hline \\' + '\n' + 
     r'\multicolumn{' + str(len(target_list) + 2) + r'}{l}{\textbf{Priors}:} \\' + '\n' +
-    r'Gaussian & $\pi$ Gaia Parallax (mas) & \\'  + '\n' +
-    r'Gaussian & $[{\rm Fe/H}]$ Metallicity (dex) & \\' + '\n' +
-    r'Upper Limit & $A_V$ V-band extinction (mag) & \\' + '\n' + 
-    r'Gaussian$^{\prime}$& $D_T$ Dilution in \tess\ & \\' + '\n' +
-    r'\hline\hline' + '\n' +               
+    r'$\pi$ (Gaussian) & Gaia Parallax (mas) & \\'  + '\n' +
+    r'$[{\rm Fe/H}]$ (Gaussian) & Metallicity (dex) & \\' + '\n' +
+    r'$A_V$ (upper limit) & V-band extinction (mag) & \\' + '\n' + 
+    r'$D_T$ (Gaussian) & Dilution in \tess & \\' + '\n' +
+    r'\hline' + '\n' +               
     r'\multicolumn{' + str(len(target_list) + 2) + r'}{l}{\textbf{Stellar Parameters}:} \\' + '\n' )
     #r'\smallskip\\\multicolumn{2}{l}{Stellar Parameters:}&\smallskip\\'+'\n')
 
