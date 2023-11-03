@@ -29,6 +29,12 @@ def make_string(medians, param, array):
     
         uperr = medians.upper_error[medians.parname == param].iloc[0]
         loerr = medians.lower_error[medians.parname == param].iloc[0]
+
+        remove_sci_notation = lambda x: np.format_float_positional(x, trim='-')
+
+        uperr = remove_sci_notation(uperr)
+        loerr = remove_sci_notation(loerr)
+
         if uperr==loerr:
             errstring = r'\pm ' + str(uperr)
         else:
