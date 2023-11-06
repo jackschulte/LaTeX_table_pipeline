@@ -50,6 +50,66 @@ def write(param_arr,file):
         file.write(ii)
     file.write(r'\\'+'\n')
 
+def lit_table(target_list, outputpath='.'):
+    '''
+    target_list: an array of strings containing the names of each target.
+    outputpath: the folder in which the table should be generated. Current working directory by default
+    '''
+
+    # Setting up to save the table as a .tex file
+
+    if os.path.exists(outputpath) == False:
+        os.mkdir(outputpath)
+
+    newfile = 'lit_table.tex'
+
+    # if this file exists, come up with a new name
+    i = 2
+    while os.path.exists(f'{outputpath}/{newfile}'):
+        newfile = 'lit_table_' + str(i) + '.tex'
+        i += 1
+    print(f'Saving this table as {newfile}...')
+
+    # Generating the preamble
+
+    colstring = 'lc'
+    namestring = ''
+    
+    for ii in range(len(target_list)):
+        colstring+='c'
+        namestring += (' & \colhead{' + target_list[ii] + '}')
+    
+    with open(f'{outputpath}/{newfile}', 'w') as fout: 
+        fout.write(r'\providecommand{\bjdtdb}{\ensuremath{\rm {BJD_{TDB}}}}'+'\n'+
+    r'\providecommand{\feh}{\ensuremath{\left[{\rm Fe}/{\rm H}\right]}}'+'\n'+
+    r'\providecommand{\teff}{\ensuremath{T_{\rm eff}}}'+'\n'+
+    r'\providecommand{\teq}{\ensuremath{T_{\rm eq}}}'+'\n'+
+    r'\providecommand{\ecosw}{\ensuremath{e\cos{\omega_*}}}'+'\n'+
+    r'\providecommand{\esinw}{\ensuremath{e\sin{\omega_*}}}'+'\n'+
+    r'\providecommand{\msun}{\ensuremath{\,M_\Sun}}'+'\n'+
+    r'\providecommand{\rsun}{\ensuremath{\,R_\Sun}}'+'\n'+
+    r'\providecommand{\lsun}{\ensuremath{\,L_\Sun}}'+'\n'+
+    r'\providecommand{\mj}{\ensuremath{\,M_{\rm J}}}'+'\n'+
+    r'\providecommand{\rj}{\ensuremath{\,R_{\rm J}}}'+'\n'+
+    r'\providecommand{\me}{\ensuremath{\,M_{\rm E}}}'+'\n'+
+    r'\providecommand{\re}{\ensuremath{\,R_{\rm E}}}'+'\n'+
+    r'\providecommand{\fave}{\langle F \rangle}'+'\n'+
+    r'\providecommand{\fluxcgs}{10$^9$ erg s$^{-1}$ cm$^{-2}$}'+'\n'+
+    r'\providecommand{\tess}{\textit{TESS}\xspace}'+'\n'+
+    r'\tablecolumns{' + str(len(target_list) + 2) + '}'+'\n'+
+    r'\tablehead{ & ' + namestring + '}'+'\n'+
+    r'\startdata'+'\n'+
+    #r'\hline \\' + '\n' + 
+    #r'\hline \\' + '\n' + 
+    r'\multicolumn{' + str(len(target_list) + 2) + r'}{l}{\textbf{Other identifiers}:} \\' + '\n' +
+    r'\tess Input Catalog & \\' + '\n' +
+    r'$ & TYCHO-2 & \\'  + '\n' +
+    r'$ & 2MASS & \\' + '\n' +
+    r'$ & \tess Sector & \\' + '\n' + 
+    r'\hline' + '\n' +               
+    r'\multicolumn{' + str(len(target_list) + 2) + r'}{l}{\textbf{Stellar Parameters}:} \\' + '\n' )
+
+
 def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.'):
 
     '''
@@ -372,7 +432,6 @@ def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.'):
     for ii in range(len(target_list)):
         colstring+='c'
         namestring += (' & \colhead{' + target_list[ii] + '}')
-    
 
     # Generating the preamble
     
