@@ -47,10 +47,56 @@ def make_median_string(medians, param, array):
     else:
         array.append('& ---')
 
-def make_and_write_lit_rows(TICIDs, TESS_mags, TESS_mags_err, file):
+def gen_value_str(array, value, error=None):
+    if (value == None) or (isinstance(value, np.ma.core.MaskedConstant)):
+        array.append('& ---')
+    elif (error == None) or (isinstance(error, np.ma.core.MaskedConstant)):
+        array.append(r'& ' + str(value))
+    else:
+        array.append(r'& $' + str(value) + r' \pm ' + str(error) + '$ ')
 
-    # Initializing rows of the table
+def write(param_arr,file):
+    for ii in param_arr:
+        file.write(ii)
+    file.write(r'\\'+'\n')
 
+def lit_table(target_list, outputpath='.'):
+    '''
+    target_list: an array of strings containing the names of each target. Nominally, these should be TOI IDs. Ex: ['TOI-1855', 'TOI-2107']
+    outputpath: the folder in which the table should be generated. Current working directory by default
+    '''
+
+    # Setting up to save the table as a .tex file
+
+    if os.path.exists(outputpath) == False:
+        os.mkdir(outputpath)
+
+    newfile = 'lit_table.tex'
+
+    # if this file exists, come up with a new name
+    i = 2
+    while os.path.exists(f'{outputpath}/{newfile}'):
+        newfile = 'lit_table_' + str(i) + '.tex'
+        i += 1
+    print(f'Saving this table as {newfile}...')
+
+    # Turning TOIs into TIC IDs
+
+    url="https://exofop.ipac.caltech.edu/tess/download_toi.php?sort=toi&output=pipe"
+    TOI_df=pd.read_csv(url, delimiter='|', index_col=1)
+    TIC_IDs = [] # initializing list
+    TESS_mags = [] # TESS mags are in exofop, not Vizier
+    TESS_mags_err = []
+    for toi in target_list:
+        toi_id = float(toi[4:]) + 0.01
+        TIC_ID = TOI_df.loc[toi_id]['TIC ID']
+        TESS_mag = TOI_df.loc[toi_id]['TESS Mag']
+        TESS_mag_err = TOI_df.loc[toi_id]['TESS Mag err']
+        TIC_IDs.append(TIC_ID)
+        TESS_mags.append(TESS_mag)
+        TESS_mags_err.append(TESS_mag_err)
+    
+    # initializing rows
     ra_arr=[r'$\alpha_{J2000}\ddagger$ & Right Ascension (RA) ']
     dec_arr=[r'$\delta_{J2000}\ddagger$ & Declination (Dec) ']
     gaia_g_arr=[r'${\rm G}$ & Gaia $G$ mag. ']
@@ -65,21 +111,39 @@ def make_and_write_lit_rows(TICIDs, TESS_mags, TESS_mags_err, file):
     wise3_arr=[r'$W3$ & WISE $W3$ mag. ']
     wise4_arr=[r'$W4$ & WISE $W4$ mag. ']
     pmra_arr=[r'$\mu_{\alpha}$ & Gaia DR3 proper motion in RA (mas yr$^{-1}$)']
-    pmdec_arr=[r'$\mu_{\alpha}$ & Gaia DR3 proper motion in DEC (mas yr$^{-1}$)']
+    pmdec_arr=[r'$\mu_{\delta}$ & Gaia DR3 proper motion in DEC (mas yr$^{-1}$)']
     parallax_arr=[r'$\pi^\dagger$ & Gaia DR3 Parallax (mas) ']
     vbroad_arr=[r'$v\sin{i_\star}$ & Projected rotational velocity (km s$^{-1}$) ']
     # add note that vbroad includes other effects such as macroturbulence, template mismatch, and other instrumental effects
 
+    tic_id_str=''
+    tycho_id_str=''
+    twomass_id_str=''
 
-    for i in range(len(TICIDs)):
+    # query for data and build rows
+    for i in range(len(TIC_IDs)):
         # querying for data
-        data_gaia = Vizier.query_region('TIC ' + str(TICIDs[i]), radius=Angle(0.001, "deg"), catalog='I/355/gaiadr3')
-        data_2MASS = Vizier.query_region('TIC ' + str(TICIDs[i]), radius=Angle(0.001, "deg"), catalog='II/246/out')
-        data_WISE = Vizier.query_region('TIC ' + str(TICIDs[i]), radius=Angle(0.001, "deg"), catalog='II/311/wise')
+        data_gaia = Vizier.query_region('TIC ' + str(TIC_IDs[i]), radius=Angle(0.001, "deg"), catalog='I/355/gaiadr3')
+        data_2MASS = Vizier.query_region('TIC ' + str(TIC_IDs[i]), radius=Angle(0.001, "deg"), catalog='II/246/out')
+        data_WISE = Vizier.query_region('TIC ' + str(TIC_IDs[i]), radius=Angle(0.001, "deg"), catalog='II/311/wise')
         
-        assert len(data_gaia) == 1, f'Multiple Vizier query results for {TICIDs[i]}'
-        assert len(data_2MASS) == 1, f'Multiple Vizier query results for {TICIDs[i]}'
-        assert len(data_WISE) == 1, f'Multiple Vizier query results for {TICIDs[i]}'
+        assert len(data_gaia) == 1, f'Multiple Vizier query results for {TIC_IDs[i]}'
+        assert len(data_2MASS) == 1, f'Multiple Vizier query results for {TIC_IDs[i]}'
+        assert len(data_WISE) == 1, f'Multiple Vizier query results for {TIC_IDs[i]}'
+
+        # store other identifiers
+        tic_id_str += (' & TIC ' + str(TIC_IDs[i]))
+        tycho_id = data_gaia[0]['TYC2'][0]
+        if len(tycho_id) > 0:
+            tycho_id_str += (' & TYC ' + tycho_id)
+        else:
+            tycho_id_str += ' & ---'
+        twomass_id = data_gaia[0]['_2MASS'][0]
+        if len(twomass_id) > 0:
+            twomass_id_str += (' & J' + twomass_id)
+        else:
+            twomass_id_str += ' & ---'
+        
 
         ra = data_gaia[0]['RA_ICRS'][0]
         ra_angle = Angle(ra, 'deg')
@@ -136,86 +200,15 @@ def make_and_write_lit_rows(TICIDs, TESS_mags, TESS_mags_err, file):
         gen_value_str(pmdec_arr, pmdec, pmdec_err)
         gen_value_str(parallax_arr, parallax, parallax_err)
         gen_value_str(vbroad_arr, vbroad)
-        
-    
-    write(ra_arr, file)
-    write(dec_arr, file)
-    write(pmra_arr, file)
-    write(pmdec_arr, file)
-    write(parallax_arr, file)
-    write(vbroad_arr, file)
-    file.write(r'\multicolumn{' + str(len(TICIDs) + 2) + r'}{l}{\textbf{Photometric Parameters}:} \\' + '\n')
-    write(gaia_g_arr, file)
-    write(gaia_bp_arr, file)
-    write(gaia_rp_arr, file)
-    write(tmag_arr, file)
-    write(j_2mass_arr, file)
-    write(h_2mass_arr, file)
-    write(k_2mass_arr, file)
-    write(wise1_arr, file)
-    write(wise2_arr, file)
-    write(wise3_arr, file)
-    write(wise4_arr, file)
-
-def gen_value_str(array, value, error=None):
-    if (value == None) or (isinstance(value, np.ma.core.MaskedConstant)):
-        array.append('& ---')
-    elif (error == None) or (isinstance(error, np.ma.core.MaskedConstant)):
-        array.append(r'& ' + str(value))
-    else:
-        array.append(r'& $' + str(value) + r' \pm ' + str(error) + '$ ')
-
-def write(param_arr,file):
-    for ii in param_arr:
-        file.write(ii)
-    file.write(r'\\'+'\n')
-
-def lit_table(target_list, outputpath='.'):
-    '''
-    target_list: an array of strings containing the names of each target. Nominally, these should be TOI IDs. Ex: ['TOI-1855', 'TOI-2107']
-    outputpath: the folder in which the table should be generated. Current working directory by default
-    '''
-
-    # Setting up to save the table as a .tex file
-
-    if os.path.exists(outputpath) == False:
-        os.mkdir(outputpath)
-
-    newfile = 'lit_table.tex'
-
-    # if this file exists, come up with a new name
-    i = 2
-    while os.path.exists(f'{outputpath}/{newfile}'):
-        newfile = 'lit_table_' + str(i) + '.tex'
-        i += 1
-    print(f'Saving this table as {newfile}...')
-
-    # Turning TOIs into TIC IDs
-
-    url="https://exofop.ipac.caltech.edu/tess/download_toi.php?sort=toi&output=pipe"
-    TOI_df=pd.read_csv(url, delimiter='|', index_col=1)
-    TIC_IDs = [] # initializing list
-    TESS_mags = [] # TESS mags are in exofop, not Vizier
-    TESS_mags_err = []
-    for toi in target_list:
-        toi_id = float(toi[4:]) + 0.01
-        TIC_ID = TOI_df.loc[toi_id]['TIC ID']
-        TESS_mag = TOI_df.loc[toi_id]['TESS Mag']
-        TESS_mag_err = TOI_df.loc[toi_id]['TESS Mag err']
-        TIC_IDs.append(TIC_ID)
-        TESS_mags.append(TESS_mag)
-        TESS_mags_err.append(TESS_mag_err)
-
 
     # Generating the preamble
-
     colstring = 'lc'
     namestring = ''
     
     for ii in range(len(target_list)):
         colstring+='c'
         namestring += (' & \colhead{' + target_list[ii] + '}')
-    
+
     with open(f'{outputpath}/{newfile}', 'w') as fout: 
         fout.write(r'\providecommand{\bjdtdb}{\ensuremath{\rm {BJD_{TDB}}}}'+'\n'+
     r'\providecommand{\feh}{\ensuremath{\left[{\rm Fe}/{\rm H}\right]}}'+'\n'+
@@ -239,13 +232,30 @@ def lit_table(target_list, outputpath='.'):
     #r'\hline \\' + '\n' + 
     #r'\hline \\' + '\n' + 
     r'\multicolumn{' + str(len(target_list) + 2) + r'}{l}{\textbf{Other identifiers}:} \\' + '\n' +
-    r'& \tess Input Catalog & \\' + '\n' +
-    r'& TYCHO-2 & \\'  + '\n' +
-    r'& 2MASS & \\' + '\n' +
+    r'& \tess Input Catalog' + tic_id_str + r'\\' + '\n' +
+    r'& TYCHO-2' + tycho_id_str + r'\\'  + '\n' +
+    r'& 2MASS' + twomass_id_str + r'\\' + '\n' +
     r'\hline' + '\n' +               
     r'\multicolumn{' + str(len(target_list) + 2) + r'}{l}{\textbf{Astrometric Parameters}:} \\' + '\n' )
 
-        make_and_write_lit_rows(TIC_IDs, TESS_mags, TESS_mags_err, fout)
+        write(ra_arr, fout)
+        write(dec_arr, fout)
+        write(pmra_arr, fout)
+        write(pmdec_arr, fout)
+        write(parallax_arr, fout)
+        write(vbroad_arr, fout)
+        fout.write(r'\multicolumn{' + str(len(TIC_IDs) + 2) + r'}{l}{\textbf{Photometric Parameters}:} \\' + '\n')
+        write(gaia_g_arr, fout)
+        write(gaia_bp_arr, fout)
+        write(gaia_rp_arr, fout)
+        write(tmag_arr, fout)
+        write(j_2mass_arr, fout)
+        write(h_2mass_arr, fout)
+        write(k_2mass_arr, fout)
+        write(wise1_arr, fout)
+        write(wise2_arr, fout)
+        write(wise3_arr, fout)
+        write(wise4_arr, fout)
 
         fout.write(r'\enddata' + '\n')
     
