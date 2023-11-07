@@ -123,9 +123,18 @@ def lit_table(target_list, outputpath='.'):
     # query for data and build rows
     for i in range(len(TIC_IDs)):
         # querying for data
-        data_gaia = Vizier.query_region('TIC ' + str(TIC_IDs[i]), radius=Angle(0.001, "deg"), catalog='I/355/gaiadr3')
-        data_2MASS = Vizier.query_region('TIC ' + str(TIC_IDs[i]), radius=Angle(0.001, "deg"), catalog='II/246/out')
-        data_WISE = Vizier.query_region('TIC ' + str(TIC_IDs[i]), radius=Angle(0.001, "deg"), catalog='II/311/wise')
+        gaia_columns=['RA_ICRS', 'DE_ICRS', 'Gmag', 'e_Gmag', 'BPmag', 'e_BPmag', 'RPmag', 'e_RPmag', 'pmRA', \
+            'e_pmRA', 'pmDE', 'e_pmDE', 'Plx', 'e_Plx', 'Vbroad', 'e_Vbroad', 'TYC2', '2MASS']
+        vgaia = Vizier(columns=gaia_columns, catalog='I/355/gaiadr3')
+        data_gaia = vgaia.query_region('TIC ' + str(TIC_IDs[i]), radius=Angle(0.001, "deg"))
+
+        twomass_columns=['Jmag', 'e_Jmag', 'Hmag', 'e_Hmag', 'Kmag', 'e_Kmag']
+        v2mass = Vizier(columns=twomass_columns, catalog='II/246/out')
+        data_2MASS = v2mass.query_region('TIC ' + str(TIC_IDs[i]), radius=Angle(0.001, "deg"))
+
+        WISE_columns=['W1mag', 'e_W1mag', 'W2mag', 'e_W2mag', 'W3mag', 'e_W3mag', 'W4mag', 'e_W4mag']
+        vwise = Vizier(columns=WISE_columns, catalog='II/311/wise')
+        data_WISE = vwise.query_region('TIC ' + str(TIC_IDs[i]), radius=Angle(0.001, "deg"))
         
         assert len(data_gaia) == 1, f'Multiple Vizier query results for {TIC_IDs[i]}'
         assert len(data_2MASS) == 1, f'Multiple Vizier query results for {TIC_IDs[i]}'
@@ -143,21 +152,38 @@ def lit_table(target_list, outputpath='.'):
             twomass_id_str += (' & J' + twomass_id)
         else:
             twomass_id_str += ' & ---'
-        
 
         ra = data_gaia[0]['RA_ICRS'][0]
         ra_angle = Angle(ra, 'deg')
-        ra_str = f'{int(ra_angle.hms[0])}:{int(ra_angle.hms[1])}:{round(float(ra_angle.hms[2]), 3)}'
+        ra_hr = int(ra_angle.hms[0])
+        if ra_hr < 10: # filling with zeroes to match hh:mm:ss format
+            ra_hr = f'0{ra_hr}'
+        ra_min = int(ra_angle.hms[1])
+        if ra_min < 10:
+            ra_min = f'0{ra_min}'
+        ra_sec = round(float(ra_angle.hms[2]), 3)
+        if ra_sec < 10:
+            ra_sec = f'0{ra_sec}'
+        ra_str = f'{ra_hr}:{ra_min}:{ra_sec}'
         dec = data_gaia[0]['DE_ICRS'][0]
         dec_angle = Angle(dec, 'deg')
-        dec_str = f'{int(dec_angle.dms[0])}:{np.abs(int(dec_angle.dms[1]))}:{np.abs(round(float(dec_angle.dms[2]), 3))}'
+        dec_deg = int(dec_angle.dms[0])
+        if abs(dec_deg) < 10:
+            dec_deg = f'0{dec_deg}'
+        dec_min = abs(int(dec_angle.dms[1]))
+        if dec_min < 10:
+            dec_min = f'0{dec_min}'
+        dec_sec = abs(round(float(dec_angle.dms[2]), 3))
+        if dec_sec < 10:
+            dec_sec = f'0{dec_sec}'
+        dec_str = f'{dec_deg}:{dec_min}:{dec_sec}'
 
         gaia_g = data_gaia[0]['Gmag'][0]
-        gaia_g_err = 0.02 # CHANGE THIS
+        gaia_g_err = data_gaia[0]['e_Gmag'][0]
         gaia_bp = data_gaia[0]['BPmag'][0]
-        gaia_bp_err = 0.02 # CHANGE THIS
+        gaia_bp_err = data_gaia[0]['e_BPmag'][0]
         gaia_rp = data_gaia[0]['RPmag'][0]
-        gaia_rp_err = 0.02 # CHANGE THIS
+        gaia_rp_err = data_gaia[0]['e_RPmag'][0]
 
         j_2mass = data_2MASS[0]['Jmag'][0]
         j_2mass_err = data_2MASS[0]['e_Jmag'][0]
@@ -182,6 +208,7 @@ def lit_table(target_list, outputpath='.'):
         parallax = data_gaia[0]['Plx'][0]
         parallax_err = data_gaia[0]['e_Plx'][0]
         vbroad = data_gaia[0]['Vbroad'][0]
+        vbroad_err = data_gaia[0]['e_Vbroad'][0]
 
         gen_value_str(ra_arr, ra_str)
         gen_value_str(dec_arr, dec_str)
@@ -199,7 +226,7 @@ def lit_table(target_list, outputpath='.'):
         gen_value_str(pmra_arr, pmra, pmra_err)
         gen_value_str(pmdec_arr, pmdec, pmdec_err)
         gen_value_str(parallax_arr, parallax, parallax_err)
-        gen_value_str(vbroad_arr, vbroad)
+        gen_value_str(vbroad_arr, vbroad, vbroad_err)
 
     # Generating the preamble
     colstring = 'lc'
