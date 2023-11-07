@@ -9,6 +9,8 @@ import glob
 import pandas as pd
 import matplotlib.colors as colors
 from astropy.coordinates import SkyCoord
+from astroquery.vizier import Vizier
+from astropy.coordinates import Angle
 
 def grab_medians(name, path, file_prefix = '.MIST.SED.'):
     '''
@@ -22,7 +24,7 @@ def grab_medians(name, path, file_prefix = '.MIST.SED.'):
     medians = pd.read_csv(path + name + file_prefix + 'median.csv', names=median_names, header=None, skiprows=1)
     return medians
 
-def make_string(medians, param, array):
+def make_median_string(medians, param, array):
     param = param+'_0'
 
     if medians.parname.isin([param]).any() == True:
@@ -45,6 +47,124 @@ def make_string(medians, param, array):
     else:
         array.append('& ---')
 
+def make_and_write_lit_rows(TICIDs, TESS_mags, TESS_mags_err, file):
+
+    # Initializing rows of the table
+
+    ra_arr=[r'$\alpha_{J2000}\ddagger$ & Right Ascension (RA) ']
+    dec_arr=[r'$\delta_{J2000}\ddagger$ & Declination (Dec) ']
+    gaia_g_arr=[r'${\rm G}$ & Gaia $G$ mag. ']
+    gaia_bp_arr=[r'$G_{\rm BP}$ & Gaia $G_{\rm BP}$ mag. ']
+    gaia_rp_arr=[r'$G_{\rm RP}$ & Gaia $G_{\rm RP}$ mag. ']
+    tmag_arr=[r'${\rm T}$ & TESS mag. ']
+    j_2mass_arr=[r'$J$ & 2MASS $J$ mag. ']
+    h_2mass_arr=[r'$H$ & 2MASS $H$ mag. ']
+    k_2mass_arr=[r'$K$ & 2MASS $K$ mag. ']
+    wise1_arr=[r'$W1$ & WISE $W1$ mag. ']
+    wise2_arr=[r'$W2$ & WISE $W2$ mag. ']
+    wise3_arr=[r'$W3$ & WISE $W3$ mag. ']
+    wise4_arr=[r'$W4$ & WISE $W4$ mag. ']
+    pmra_arr=[r'$\mu_{\alpha}$ & Gaia DR3 proper motion in RA (mas yr$^{-1}$)']
+    pmdec_arr=[r'$\mu_{\alpha}$ & Gaia DR3 proper motion in DEC (mas yr$^{-1}$)']
+    parallax_arr=[r'$\pi^\dagger$ & Gaia DR3 Parallax (mas) ']
+    vbroad_arr=[r'$v\sin{i_\star}$ & Projected rotational velocity (km s$^{-1}$) ']
+    # add note that vbroad includes other effects such as macroturbulence, template mismatch, and other instrumental effects
+
+
+    for i in range(len(TICIDs)):
+        # querying for data
+        data_gaia = Vizier.query_region('TIC ' + str(TICIDs[i]), radius=Angle(0.001, "deg"), catalog='I/355/gaiadr3')
+        data_2MASS = Vizier.query_region('TIC ' + str(TICIDs[i]), radius=Angle(0.001, "deg"), catalog='II/246/out')
+        data_WISE = Vizier.query_region('TIC ' + str(TICIDs[i]), radius=Angle(0.001, "deg"), catalog='II/311/wise')
+        
+        assert len(data_gaia) == 1, f'Multiple Vizier query results for {TICIDs[i]}'
+        assert len(data_2MASS) == 1, f'Multiple Vizier query results for {TICIDs[i]}'
+        assert len(data_WISE) == 1, f'Multiple Vizier query results for {TICIDs[i]}'
+
+        ra = data_gaia[0]['RA_ICRS'][0]
+        ra_angle = Angle(ra, 'deg')
+        ra_str = f'{int(ra_angle.hms[0])}:{int(ra_angle.hms[1])}:{round(float(ra_angle.hms[2]), 3)}'
+        dec = data_gaia[0]['DE_ICRS'][0]
+        dec_angle = Angle(dec, 'deg')
+        dec_str = f'{int(dec_angle.dms[0])}:{np.abs(int(dec_angle.dms[1]))}:{np.abs(round(float(dec_angle.dms[2]), 3))}'
+
+        gaia_g = data_gaia[0]['Gmag'][0]
+        gaia_g_err = 0.02 # CHANGE THIS
+        gaia_bp = data_gaia[0]['BPmag'][0]
+        gaia_bp_err = 0.02 # CHANGE THIS
+        gaia_rp = data_gaia[0]['RPmag'][0]
+        gaia_rp_err = 0.02 # CHANGE THIS
+
+        j_2mass = data_2MASS[0]['Jmag'][0]
+        j_2mass_err = data_2MASS[0]['e_Jmag'][0]
+        h_2mass = data_2MASS[0]['Hmag'][0]
+        h_2mass_err = data_2MASS[0]['e_Hmag'][0]
+        k_2mass = data_2MASS[0]['Kmag'][0]
+        k_2mass_err = data_2MASS[0]['e_Kmag'][0]
+
+        wise1 = data_WISE[0]['W1mag'][0]
+        wise1_err = data_WISE[0]['e_W1mag'][0]
+        wise2 = data_WISE[0]['W2mag'][0]
+        wise2_err = data_WISE[0]['e_W2mag'][0]
+        wise3 = data_WISE[0]['W3mag'][0]
+        wise3_err = data_WISE[0]['e_W3mag'][0]
+        wise4 = data_WISE[0]['W4mag'][0]
+        wise4_err = data_WISE[0]['e_W4mag'][0]
+
+        pmra = data_gaia[0]['pmRA'][0]
+        pmra_err = data_gaia[0]['e_pmRA'][0]
+        pmdec = data_gaia[0]['pmDE'][0]
+        pmdec_err = data_gaia[0]['e_pmDE'][0]
+        parallax = data_gaia[0]['Plx'][0]
+        parallax_err = data_gaia[0]['e_Plx'][0]
+        vbroad = data_gaia[0]['Vbroad'][0]
+
+        gen_value_str(ra_arr, ra_str)
+        gen_value_str(dec_arr, dec_str)
+        gen_value_str(gaia_g_arr, gaia_g, gaia_g_err)
+        gen_value_str(gaia_bp_arr, gaia_bp, gaia_bp_err)
+        gen_value_str(gaia_rp_arr, gaia_rp, gaia_rp_err)
+        gen_value_str(tmag_arr, TESS_mags[i], TESS_mags_err[i])
+        gen_value_str(j_2mass_arr, j_2mass, j_2mass_err)
+        gen_value_str(h_2mass_arr, h_2mass, h_2mass_err)
+        gen_value_str(k_2mass_arr, k_2mass, k_2mass_err)
+        gen_value_str(wise1_arr, wise1, wise1_err)
+        gen_value_str(wise2_arr, wise2, wise2_err)
+        gen_value_str(wise3_arr, wise3, wise3_err)
+        gen_value_str(wise4_arr, wise4, wise4_err)
+        gen_value_str(pmra_arr, pmra, pmra_err)
+        gen_value_str(pmdec_arr, pmdec, pmdec_err)
+        gen_value_str(parallax_arr, parallax, parallax_err)
+        gen_value_str(vbroad_arr, vbroad)
+        
+    
+    write(ra_arr, file)
+    write(dec_arr, file)
+    write(pmra_arr, file)
+    write(pmdec_arr, file)
+    write(parallax_arr, file)
+    write(vbroad_arr, file)
+    file.write(r'\multicolumn{' + str(len(TICIDs) + 2) + r'}{l}{\textbf{Photometric Parameters}:} \\' + '\n')
+    write(gaia_g_arr, file)
+    write(gaia_bp_arr, file)
+    write(gaia_rp_arr, file)
+    write(tmag_arr, file)
+    write(j_2mass_arr, file)
+    write(h_2mass_arr, file)
+    write(k_2mass_arr, file)
+    write(wise1_arr, file)
+    write(wise2_arr, file)
+    write(wise3_arr, file)
+    write(wise4_arr, file)
+
+def gen_value_str(array, value, error=None):
+    if (value == None) or (isinstance(value, np.ma.core.MaskedConstant)):
+        array.append('& ---')
+    elif (error == None) or (isinstance(error, np.ma.core.MaskedConstant)):
+        array.append(r'& ' + str(value))
+    else:
+        array.append(r'& $' + str(value) + r' \pm ' + str(error) + '$ ')
+
 def write(param_arr,file):
     for ii in param_arr:
         file.write(ii)
@@ -52,7 +172,7 @@ def write(param_arr,file):
 
 def lit_table(target_list, outputpath='.'):
     '''
-    target_list: an array of strings containing the names of each target.
+    target_list: an array of strings containing the names of each target. Nominally, these should be TOI IDs. Ex: ['TOI-1855', 'TOI-2107']
     outputpath: the folder in which the table should be generated. Current working directory by default
     '''
 
@@ -69,6 +189,23 @@ def lit_table(target_list, outputpath='.'):
         newfile = 'lit_table_' + str(i) + '.tex'
         i += 1
     print(f'Saving this table as {newfile}...')
+
+    # Turning TOIs into TIC IDs
+
+    url="https://exofop.ipac.caltech.edu/tess/download_toi.php?sort=toi&output=pipe"
+    TOI_df=pd.read_csv(url, delimiter='|', index_col=1)
+    TIC_IDs = [] # initializing list
+    TESS_mags = [] # TESS mags are in exofop, not Vizier
+    TESS_mags_err = []
+    for toi in target_list:
+        toi_id = float(toi[4:]) + 0.01
+        TIC_ID = TOI_df.loc[toi_id]['TIC ID']
+        TESS_mag = TOI_df.loc[toi_id]['TESS Mag']
+        TESS_mag_err = TOI_df.loc[toi_id]['TESS Mag err']
+        TIC_IDs.append(TIC_ID)
+        TESS_mags.append(TESS_mag)
+        TESS_mags_err.append(TESS_mag_err)
+
 
     # Generating the preamble
 
@@ -102,13 +239,16 @@ def lit_table(target_list, outputpath='.'):
     #r'\hline \\' + '\n' + 
     #r'\hline \\' + '\n' + 
     r'\multicolumn{' + str(len(target_list) + 2) + r'}{l}{\textbf{Other identifiers}:} \\' + '\n' +
-    r'\tess Input Catalog & \\' + '\n' +
-    r'$ & TYCHO-2 & \\'  + '\n' +
-    r'$ & 2MASS & \\' + '\n' +
-    r'$ & \tess Sector & \\' + '\n' + 
+    r'& \tess Input Catalog & \\' + '\n' +
+    r'& TYCHO-2 & \\'  + '\n' +
+    r'& 2MASS & \\' + '\n' +
     r'\hline' + '\n' +               
-    r'\multicolumn{' + str(len(target_list) + 2) + r'}{l}{\textbf{Stellar Parameters}:} \\' + '\n' )
+    r'\multicolumn{' + str(len(target_list) + 2) + r'}{l}{\textbf{Astrometric Parameters}:} \\' + '\n' )
 
+        make_and_write_lit_rows(TIC_IDs, TESS_mags, TESS_mags_err, fout)
+
+        fout.write(r'\enddata' + '\n')
+    
 
 def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.'):
 
@@ -287,144 +427,144 @@ def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.'):
         medians = grab_medians(target_list[ii], path, file_prefix=file_prefix)
 
         if Mstar ==True: 
-            make_string(medians,'mstar',mstars)
+            make_median_string(medians,'mstar',mstars)
         if Rstar == True:
-            make_string(medians,'rstar',rstars)
+            make_median_string(medians,'rstar',rstars)
         if RstarSED==True:
-            make_string(medians,'rstarsed',rstarseds)
+            make_median_string(medians,'rstarsed',rstarseds)
         if Lstar == True:
-            make_string(medians,'lstar',lstars)
+            make_median_string(medians,'lstar',lstars)
         if fbol == True:
-            make_string(medians,'fbol',fbols)
+            make_median_string(medians,'fbol',fbols)
         if rhostar == True:
-            make_string(medians,'rhostar',rhostars)
+            make_median_string(medians,'rhostar',rhostars)
         if logg == True:
-            make_string(medians,'logg',loggs)
+            make_median_string(medians,'logg',loggs)
         if teff == True:
-            make_string(medians,'teff',teffs)
+            make_median_string(medians,'teff',teffs)
         if teffsed == True:
-            make_string(medians,'teffsed',teffseds)
+            make_median_string(medians,'teffsed',teffseds)
         if feh == True:
-            make_string(medians,'feh',fehs)
+            make_median_string(medians,'feh',fehs)
         if initfeh == True:
-            make_string(medians,'initfeh',initfehs)
+            make_median_string(medians,'initfeh',initfehs)
         if age == True:
-            make_string(medians,'age',ages)
+            make_median_string(medians,'age',ages)
         if eep == True:
-            make_string(medians,'eep',eeps)
+            make_median_string(medians,'eep',eeps)
         if logmstar == True:
-            make_string(medians,'logmstar',logmstars)
+            make_median_string(medians,'logmstar',logmstars)
         if Av == True:
-            make_string(medians,'Av',avs)
+            make_median_string(medians,'Av',avs)
         if errscale == True:
-            make_string(medians,'errscale',errscales)
+            make_median_string(medians,'errscale',errscales)
         if parallax==True:
-            make_string(medians,'parallax',plaxes)
+            make_median_string(medians,'parallax',plaxes)
         if distance==True:
-            make_string(medians,'distance',dists)
+            make_median_string(medians,'distance',dists)
             
         if period == True:
-            make_string(medians,'Period',periods)
+            make_median_string(medians,'Period',periods)
         if rp == True:
-            make_string(medians,'rp',rps)
+            make_median_string(medians,'rp',rps)
         if mp==True:
-            make_string(medians,'mp',mps)
+            make_median_string(medians,'mp',mps)
         if mpsun == True:
-            make_string(medians,'mpsun',mpsuns)
+            make_median_string(medians,'mpsun',mpsuns)
         if tc == True:
-            make_string(medians,'tc',tcs)
+            make_median_string(medians,'tc',tcs)
         if tt == True:
-            make_string(medians,'tt',tts)
+            make_median_string(medians,'tt',tts)
         if t0 == True:
-            make_string(medians,'t0',t0s)
+            make_median_string(medians,'t0',t0s)
         if semimajor == True:
-            make_string(medians,'a',semimajors)
+            make_median_string(medians,'a',semimajors)
         if ideg == True:
-            make_string(medians,'ideg',idegs)
+            make_median_string(medians,'ideg',idegs)
         if ecc == True:
-            make_string(medians,'e',eccs)
+            make_median_string(medians,'e',eccs)
         if omegadeg == True:
-            make_string(medians,'omegadeg',odegs)
+            make_median_string(medians,'omegadeg',odegs)
         if teq==True:
-            make_string(medians,'teq',teqs)
+            make_median_string(medians,'teq',teqs)
         if tcirc == True:
-            make_string(medians,'tcirc',tcircs)
+            make_median_string(medians,'tcirc',tcircs)
         if k == True:
-            make_string(medians,'k',ks)
+            make_median_string(medians,'k',ks)
         if p == True:
-            make_string(medians,'p',ps)
+            make_median_string(medians,'p',ps)
         if ar==True:
-            make_string(medians,'ar',ars)          
+            make_median_string(medians,'ar',ars)          
         if delta ==True:
-            make_string(medians,'delta',deltas)
+            make_median_string(medians,'delta',deltas)
         if depthTESS==True:
-            make_string(medians,'depth_TESS',Tdepths)
+            make_median_string(medians,'depth_TESS',Tdepths)
         if tau==True:
-            make_string(medians,'tau',taus)
+            make_median_string(medians,'tau',taus)
         if t14==True:
-            make_string(medians,'t14',t14s)
+            make_median_string(medians,'t14',t14s)
         if tfwhm==True:
-            make_string(medians,'tfwhm',tfwhms)
+            make_median_string(medians,'tfwhm',tfwhms)
         if b==True:
-            make_string(medians,'b',bs)
+            make_median_string(medians,'b',bs)
         if cosi==True:
-            make_string(medians,'cosi',cosis)
+            make_median_string(medians,'cosi',cosis)
         if bs==True:
-            make_string(medians,'bs',bss)
+            make_median_string(medians,'bs',bss)
         if taus==True:
-            make_string(medians,'taus',tauss)
+            make_median_string(medians,'taus',tauss)
         if ts14==True:
-            make_string(medians,'t14s',ts14s)
+            make_median_string(medians,'t14s',ts14s)
         if tfwhms==True:
-            make_string(medians,'tfwhms',tfwhmss)
+            make_median_string(medians,'tfwhms',tfwhmss)
         if depth25==True:
-            make_string(medians,'eclipsedepth25',depth25s)
+            make_median_string(medians,'eclipsedepth25',depth25s)
         if depth50==True:
-            make_string(medians,'eclipsedepth50',depth50s)
+            make_median_string(medians,'eclipsedepth50',depth50s)
         if depth75==True:
-            make_string(medians,'eclipsedepth75',depth75s)   
+            make_median_string(medians,'eclipsedepth75',depth75s)   
         if rhop==True:
-            make_string(medians,'rhop',rhops)
+            make_median_string(medians,'rhop',rhops)
         #if logp==True:
-        #    make_string(medians,'logp',logps)
+        #    make_median_string(medians,'logp',logps)
         if loggp==True:
-            make_string(medians,'loggp',loggps)
+            make_median_string(medians,'loggp',loggps)
         if safronov==True:
-            make_string(medians,'safronov',safronovs)
+            make_median_string(medians,'safronov',safronovs)
         if fave==True:
-            make_string(medians,'fave',faves)        
+            make_median_string(medians,'fave',faves)        
         if tp==True:
-            make_string(medians,'tp',tps)
+            make_median_string(medians,'tp',tps)
         if ts==True:
-            make_string(medians,'ts',tss)
+            make_median_string(medians,'ts',tss)
         if ta==True:
-            make_string(medians,'ta',tas)
+            make_median_string(medians,'ta',tas)
         if td==True:
-            make_string(medians,'td',tds)
+            make_median_string(medians,'td',tds)
         if vcve==True:
-            make_string(medians,'vcve',vcves)
+            make_median_string(medians,'vcve',vcves)
         if ecosw==True:
-            make_string(medians,'ecosw',ecosws)
+            make_median_string(medians,'ecosw',ecosws)
         if esinw==True:
-            make_string(medians,'esinw',esinws)
+            make_median_string(medians,'esinw',esinws)
         #if secosw==True:
-        #    make_string(medians,'secosw',secosws)
+        #    make_median_string(medians,'secosw',secosws)
         #if sesinw==True:
-        #    make_string(medians,'sesinw',sesinws)
+        #    make_median_string(medians,'sesinw',sesinws)
         if msini==True:
-            make_string(medians,'msini',msinis)
+            make_median_string(medians,'msini',msinis)
         if q==True:
-            make_string(medians,'q',qs)
+            make_median_string(medians,'q',qs)
         if dr==True:
-            make_string(medians,'dr',drs)
+            make_median_string(medians,'dr',drs)
         if pt==True:
-            make_string(medians,'pt',pts)
+            make_median_string(medians,'pt',pts)
         if ptg==True:
-            make_string(medians,'ptg',ptgs)
+            make_median_string(medians,'ptg',ptgs)
         if ps==True:
-            make_string(medians,'ps',pss)
+            make_median_string(medians,'ps',pss)
         if psg==True:
-            make_string(medians,'psg',psgs)
+            make_median_string(medians,'psg',psgs)
 
     colstring = 'lc'
     namestring = ''
@@ -567,7 +707,7 @@ def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.'):
         if rhop==True:
             write(rhops,fout)
         #if logp==True:
-        #    make_string(medians,'logp',logps)
+        #    make_median_string(medians,'logp',logps)
         if loggp==True:
             write(loggps,fout)
         if safronov==True:
@@ -591,9 +731,9 @@ def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.'):
         if esinw==True:
             write(esinws,fout)
         #if secosw==True:
-        #    make_string(medians,'secosw',secosws)
+        #    make_median_string(medians,'secosw',secosws)
         #if sesinw==True:
-        #    make_string(medians,'sesinw',sesinws)
+        #    make_median_string(medians,'sesinw',sesinws)
         if msini==True:
             write(msinis,fout)
         if q==True:
