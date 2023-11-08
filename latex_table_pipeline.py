@@ -11,9 +11,14 @@ import matplotlib.colors as colors
 from astropy.coordinates import SkyCoord
 from astroquery.vizier import Vizier
 from astropy.coordinates import Angle
+from grab_tres_vsini import grab_tres_vsini
 
 def grab_medians(name, path, file_prefix = '.MIST.SED.'):
     '''
+    Collects median values from EXOFASTv2 output files at the defined path.
+
+    Parameters
+    -----------
     name: name of the system. Ex: 'TOI-1855'
     path: path to the fit files. Ex: '/Users/jack/Research/pipelines/system_figure_pipeline/data/'
     file_prefix: prefix used in EXOFASTv2 output files
@@ -25,6 +30,15 @@ def grab_medians(name, path, file_prefix = '.MIST.SED.'):
     return medians
 
 def make_median_string(medians, param, array):
+    '''
+    Turns median values into strings containing LaTeX, ready to be entered into the median table.
+
+    Parameters
+    -----------
+    medians: Pandas DataFrame containing the median values obtained using the grab_medians function.
+    param: the parameter to generate a string for
+    array: the array corresponding to the table row that the parameter should be appended to
+    '''
     param = param+'_0'
 
     if medians.parname.isin([param]).any() == True:
@@ -60,10 +74,19 @@ def write(param_arr,file):
         file.write(ii)
     file.write(r'\\'+'\n')
 
-def lit_table(target_list, outputpath='.'):
+def lit_table(target_list, outputpath='.', vsini_type='gaia', vsini_external=None, tres_username=None, tres_password=None):
     '''
+    Generates a 'literature' table, using photometric and astrometric parameters from Gaia, 2MASS, and WISE. Optionally
+    grabs vsini measurements from TRES. WARNING: Collecting TRES vsini measurements will increase runtime by ~4 min.
+    
+    Parameters
+    -----------
     target_list: an array of strings containing the names of each target. Nominally, these should be TOI IDs. Ex: ['TOI-1855', 'TOI-2107']
     outputpath: the folder in which the table should be generated. Current working directory by default
+    vsini_type: Accepts 'gaia' to use Gaia's vbroad, 'tres' to scrape the TRES/CHIRON site (tess.exoplanets.dk), or 'external' to provide an external array of vsini values
+    vsini_external: N by 2 array containing vsini (first column) and vsini_err (second column) from an external source
+    tres_username: String including the user's TRES website username if vsini_type='tres'
+    tres_passworde: String including the user's TRES website password if vsini_type='tres'
     '''
 
     # Setting up to save the table as a .tex file
@@ -96,6 +119,19 @@ def lit_table(target_list, outputpath='.'):
         TESS_mags.append(TESS_mag)
         TESS_mags_err.append(TESS_mag_err)
     
+    # grabbing vsini from the TRES/CHIRON site
+
+    round_3sigfig = lambda x: '{:g}'.format(float('{:.{p}g}'.format(x, p=3)))
+    round_2sigfig = lambda x: '{:g}'.format(float('{:.{p}g}'.format(x, p=2)))
+
+    vsini_tres = []
+    vsini_tres_err = []
+    if vsini_type == 'tres':
+        for ticid in TIC_IDs:
+            vsini, vsini_err = grab_tres_vsini(tres_username, tres_password, ticid)
+            vsini_tres.append(round_3sigfig(vsini))
+            vsini_tres_err.append(round_2sigfig(vsini_err))
+
     # initializing rows
     ra_arr=[r'$\alpha_{J2000}\ddagger$ & Right Ascension (RA) ']
     dec_arr=[r'$\delta_{J2000}\ddagger$ & Declination (Dec) ']
@@ -113,9 +149,10 @@ def lit_table(target_list, outputpath='.'):
     pmra_arr=[r'$\mu_{\alpha}$ & Gaia DR3 proper motion in RA (mas yr$^{-1}$)']
     pmdec_arr=[r'$\mu_{\delta}$ & Gaia DR3 proper motion in DEC (mas yr$^{-1}$)']
     parallax_arr=[r'$\pi^\dagger$ & Gaia DR3 Parallax (mas) ']
-    vbroad_arr=[r'$v\sin{i_\star}$ & Projected rotational velocity (km s$^{-1}$) ']
+    vsini_arr=[r'$v\sin{i_\star}$ & Projected rotational velocity (km s$^{-1}$) ']
     # add note that vbroad includes other effects such as macroturbulence, template mismatch, and other instrumental effects
 
+    # initializing additional identifier arrays
     tic_id_str=''
     tycho_id_str=''
     twomass_id_str=''
@@ -226,7 +263,12 @@ def lit_table(target_list, outputpath='.'):
         gen_value_str(pmra_arr, pmra, pmra_err)
         gen_value_str(pmdec_arr, pmdec, pmdec_err)
         gen_value_str(parallax_arr, parallax, parallax_err)
-        gen_value_str(vbroad_arr, vbroad, vbroad_err)
+        if vsini_type == 'gaia':
+            gen_value_str(vsini_arr, vbroad, vbroad_err)
+        elif vsini_type == 'tres':
+            gen_value_str(vsini_arr, vsini_tres[i], vsini_tres_err[i])
+        elif vsini_type == 'external':
+            gen_value_str(vsini_arr, vsini_external[i][0], vsini_external[i][1])
 
     # Generating the preamble
     colstring = 'lc'
@@ -270,7 +312,7 @@ def lit_table(target_list, outputpath='.'):
         write(pmra_arr, fout)
         write(pmdec_arr, fout)
         write(parallax_arr, fout)
-        write(vbroad_arr, fout)
+        write(vsini_arr, fout)
         fout.write(r'\multicolumn{' + str(len(TIC_IDs) + 2) + r'}{l}{\textbf{Photometric Parameters}:} \\' + '\n')
         write(gaia_g_arr, fout)
         write(gaia_bp_arr, fout)
@@ -288,8 +330,11 @@ def lit_table(target_list, outputpath='.'):
     
 
 def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.'):
-
     '''
+    Generates a median table given the path to EXOFASTv2 output files.
+
+    Parameters
+    -----------
     target_list: an array of strings containing the names of each target. Names should match those in EXOFASTv2 output files.
     path: path of EXOFASTv2 output files
     file_prefix: prefix used in EXOFASTv2 file generation
