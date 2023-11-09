@@ -28,7 +28,11 @@ class AccessingTresRVs():
     if len(wh_now) > len(wh_then):
       return set(wh_now).difference(set(wh_then)).pop()
   
-  def get_RVs(self, usr, pwd, TICID):
+  def get_table(self, usr, pwd, TICID):
+    '''
+    Scrapes TRES/CHIRON site to grab table
+    '''
+
     TICID = str(TICID)
     TICID = TICID.zfill(9)
     T0name = 'T0' + TICID
@@ -43,19 +47,19 @@ class AccessingTresRVs():
     self.driver.find_element(By.ID, "ctl00_cpMainContent_tbSearch").send_keys(Keys.ENTER)
     self.driver.find_element(By.LINK_TEXT, T0name).click()
     self.vars["window_handles"] = self.driver.window_handles
-    self.driver.find_element(By.ID, "ctl00_cpMainContent_Button10").click()
-    self.vars["root"] = self.driver.current_window_handle
-    self.vars["window_handles"] = self.driver.window_handles
     self.driver.find_element(By.ID, "ctl00_cpMainContent_Button12").click()
     self.vars["win6497"] = self.wait_for_window(2000)
     self.driver.switch_to.window(self.vars["win6497"])
     self.vars["fehtable"] = self.driver.find_element(By.CSS_SELECTOR, "pre").text
   
 def grab_tres_vsini(username, password, TICID):
-    
+    '''
+    Grabs vsini measurements and calculates the mean and standard error of the mean.
+    '''
+
     myClass = AccessingTresRVs()
     myClass.setup_method("")
-    myClass.get_RVs(usr=username, pwd=password, TICID=TICID)
+    myClass.get_table(usr=username, pwd=password, TICID=TICID)
     myClass.teardown_method("")
 
     datatable = StringIO(myClass.vars["fehtable"])

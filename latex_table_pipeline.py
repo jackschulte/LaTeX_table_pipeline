@@ -63,21 +63,35 @@ def make_median_string(medians, param, array):
 
 def gen_value_str(array, value, error=None):
     if (value == None) or (isinstance(value, np.ma.core.MaskedConstant)):
-        array.append('& ---')
+        array.append('& --- ')
     elif (error == None) or (isinstance(error, np.ma.core.MaskedConstant)):
-        array.append(r'& ' + str(value))
+        array.append(r'& ' + str(value) + ' ')
     else:
         array.append(r'& $' + str(value) + r' \pm ' + str(error) + '$ ')
+
+def add_source(array, source):
+    '''
+    Appends a number corresponding to one of the sources to the final column of the table.
+
+    Parameters
+    -----------
+    array: the array corresponding to the row that you are adding the source to
+    source: an integer or string corresponding to the source that you wish to append
+    '''
+
+    array.append(f' & {source} ')
 
 def write(param_arr,file):
     for ii in param_arr:
         file.write(ii)
     file.write(r'\\'+'\n')
 
-def lit_table(target_list, outputpath='.', vsini_type='gaia', vsini_external=None, tres_username=None, tres_password=None):
+def lit_table(target_list, outputpath='.', vsini_type='gaia', vsini_external=None, tres_username=None, tres_password=None, add_source_column=False):
     '''
     Generates a 'literature' table, using photometric and astrometric parameters from Gaia, 2MASS, and WISE. Optionally
     grabs vsini measurements from TRES. WARNING: Collecting TRES vsini measurements will increase runtime by ~4 min.
+
+    WARNING: Between the source column and target columns, there can only be a maximum of 5 columns.
     
     Parameters
     -----------
@@ -87,6 +101,7 @@ def lit_table(target_list, outputpath='.', vsini_type='gaia', vsini_external=Non
     vsini_external: N by 2 array containing vsini (first column) and vsini_err (second column) from an external source
     tres_username: String including the user's TRES website username if vsini_type='tres'
     tres_passworde: String including the user's TRES website password if vsini_type='tres'
+    add_source_column: a boolean to determine whether a source column is added.
     '''
 
     # Setting up to save the table as a .tex file
@@ -270,6 +285,26 @@ def lit_table(target_list, outputpath='.', vsini_type='gaia', vsini_external=Non
         elif vsini_type == 'external':
             gen_value_str(vsini_arr, vsini_external[i][0], vsini_external[i][1])
 
+    if add_source_column == True:
+        # adding sources to the rows
+        add_source(ra_arr, 1) # 1 corresponds to Gaia
+        add_source(dec_arr, 1)
+        add_source(gaia_g_arr, 1)
+        add_source(gaia_bp_arr, 1)
+        add_source(gaia_rp_arr, 1)
+        add_source(pmra_arr, 1)
+        add_source(pmdec_arr, 1)
+        add_source(parallax_arr, 1)
+        add_source(vsini_arr, 2) # 2 corresponds to TRES
+        add_source(tmag_arr, 3) # 3 corresponds to the TIC
+        add_source(j_2mass_arr, 4) # 4 corresponds to 2MASS
+        add_source(h_2mass_arr, 4)
+        add_source(k_2mass_arr, 4)
+        add_source(wise1_arr, 5) # 5 corresponds to WISE
+        add_source(wise2_arr, 5)
+        add_source(wise3_arr, 5)
+        add_source(wise4_arr, 5)
+
     # Generating the preamble
     colstring = 'lc'
     namestring = ''
@@ -278,55 +313,106 @@ def lit_table(target_list, outputpath='.', vsini_type='gaia', vsini_external=Non
         colstring+='c'
         namestring += (' & \colhead{' + target_list[ii] + '}')
 
-    with open(f'{outputpath}/{newfile}', 'w') as fout: 
-        fout.write(r'\providecommand{\bjdtdb}{\ensuremath{\rm {BJD_{TDB}}}}'+'\n'+
-    r'\providecommand{\feh}{\ensuremath{\left[{\rm Fe}/{\rm H}\right]}}'+'\n'+
-    r'\providecommand{\teff}{\ensuremath{T_{\rm eff}}}'+'\n'+
-    r'\providecommand{\teq}{\ensuremath{T_{\rm eq}}}'+'\n'+
-    r'\providecommand{\ecosw}{\ensuremath{e\cos{\omega_*}}}'+'\n'+
-    r'\providecommand{\esinw}{\ensuremath{e\sin{\omega_*}}}'+'\n'+
-    r'\providecommand{\msun}{\ensuremath{\,M_\Sun}}'+'\n'+
-    r'\providecommand{\rsun}{\ensuremath{\,R_\Sun}}'+'\n'+
-    r'\providecommand{\lsun}{\ensuremath{\,L_\Sun}}'+'\n'+
-    r'\providecommand{\mj}{\ensuremath{\,M_{\rm J}}}'+'\n'+
-    r'\providecommand{\rj}{\ensuremath{\,R_{\rm J}}}'+'\n'+
-    r'\providecommand{\me}{\ensuremath{\,M_{\rm E}}}'+'\n'+
-    r'\providecommand{\re}{\ensuremath{\,R_{\rm E}}}'+'\n'+
-    r'\providecommand{\fave}{\langle F \rangle}'+'\n'+
-    r'\providecommand{\fluxcgs}{10$^9$ erg s$^{-1}$ cm$^{-2}$}'+'\n'+
-    r'\providecommand{\tess}{\textit{TESS}\xspace}'+'\n'+
-    r'\tablecolumns{' + str(len(target_list) + 2) + '}'+'\n'+
-    r'\tablehead{ & ' + namestring + '}'+'\n'+
-    r'\startdata'+'\n'+
-    #r'\hline \\' + '\n' + 
-    #r'\hline \\' + '\n' + 
-    r'\multicolumn{' + str(len(target_list) + 2) + r'}{l}{\textbf{Other identifiers}:} \\' + '\n' +
-    r'& \tess Input Catalog' + tic_id_str + r'\\' + '\n' +
-    r'& TYCHO-2' + tycho_id_str + r'\\'  + '\n' +
-    r'& 2MASS' + twomass_id_str + r'\\' + '\n' +
-    r'\hline' + '\n' +               
-    r'\multicolumn{' + str(len(target_list) + 2) + r'}{l}{\textbf{Astrometric Parameters}:} \\' + '\n' )
+    if add_source_column == True:
+        with open(f'{outputpath}/{newfile}', 'w') as fout: 
+            fout.write(r'\providecommand{\bjdtdb}{\ensuremath{\rm {BJD_{TDB}}}}'+'\n'+
+        r'\providecommand{\feh}{\ensuremath{\left[{\rm Fe}/{\rm H}\right]}}'+'\n'+
+        r'\providecommand{\teff}{\ensuremath{T_{\rm eff}}}'+'\n'+
+        r'\providecommand{\teq}{\ensuremath{T_{\rm eq}}}'+'\n'+
+        r'\providecommand{\ecosw}{\ensuremath{e\cos{\omega_*}}}'+'\n'+
+        r'\providecommand{\esinw}{\ensuremath{e\sin{\omega_*}}}'+'\n'+
+        r'\providecommand{\msun}{\ensuremath{\,M_\Sun}}'+'\n'+
+        r'\providecommand{\rsun}{\ensuremath{\,R_\Sun}}'+'\n'+
+        r'\providecommand{\lsun}{\ensuremath{\,L_\Sun}}'+'\n'+
+        r'\providecommand{\mj}{\ensuremath{\,M_{\rm J}}}'+'\n'+
+        r'\providecommand{\rj}{\ensuremath{\,R_{\rm J}}}'+'\n'+
+        r'\providecommand{\me}{\ensuremath{\,M_{\rm E}}}'+'\n'+
+        r'\providecommand{\re}{\ensuremath{\,R_{\rm E}}}'+'\n'+
+        r'\providecommand{\fave}{\langle F \rangle}'+'\n'+
+        r'\providecommand{\fluxcgs}{10$^9$ erg s$^{-1}$ cm$^{-2}$}'+'\n'+
+        r'\providecommand{\tess}{\textit{TESS}\xspace}'+'\n'+
+        r'\tablecolumns{' + str(len(target_list) + 3) + '}'+'\n'+
+        r'\tablehead{ & ' + namestring + r' & \colhead{Source}' + '}'+'\n'+
+        r'\startdata'+'\n'+
+        #r'\hline \\' + '\n' + 
+        #r'\hline \\' + '\n' + 
+        r'\multicolumn{' + str(len(target_list) + 3) + r'}{l}{\textbf{Other identifiers}:} \\' + '\n' +
+        r'& \tess Input Catalog' + tic_id_str + r'\\' + '\n' +
+        r'& TYCHO-2' + tycho_id_str + r'\\'  + '\n' +
+        r'& 2MASS' + twomass_id_str + r'\\' + '\n' +
+        r'\hline' + '\n' +               
+        r'\multicolumn{' + str(len(target_list) + 3) + r'}{l}{\textbf{Astrometric Parameters}:} \\' + '\n' )
 
-        write(ra_arr, fout)
-        write(dec_arr, fout)
-        write(pmra_arr, fout)
-        write(pmdec_arr, fout)
-        write(parallax_arr, fout)
-        write(vsini_arr, fout)
-        fout.write(r'\multicolumn{' + str(len(TIC_IDs) + 2) + r'}{l}{\textbf{Photometric Parameters}:} \\' + '\n')
-        write(gaia_g_arr, fout)
-        write(gaia_bp_arr, fout)
-        write(gaia_rp_arr, fout)
-        write(tmag_arr, fout)
-        write(j_2mass_arr, fout)
-        write(h_2mass_arr, fout)
-        write(k_2mass_arr, fout)
-        write(wise1_arr, fout)
-        write(wise2_arr, fout)
-        write(wise3_arr, fout)
-        write(wise4_arr, fout)
+            write(ra_arr, fout)
+            write(dec_arr, fout)
+            write(pmra_arr, fout)
+            write(pmdec_arr, fout)
+            write(parallax_arr, fout)
+            write(vsini_arr, fout)
+            fout.write(r'\multicolumn{' + str(len(TIC_IDs) + 3) + r'}{l}{\textbf{Photometric Parameters}:} \\' + '\n')
+            write(gaia_g_arr, fout)
+            write(gaia_bp_arr, fout)
+            write(gaia_rp_arr, fout)
+            write(tmag_arr, fout)
+            write(j_2mass_arr, fout)
+            write(h_2mass_arr, fout)
+            write(k_2mass_arr, fout)
+            write(wise1_arr, fout)
+            write(wise2_arr, fout)
+            write(wise3_arr, fout)
+            write(wise4_arr, fout)
 
-        fout.write(r'\enddata' + '\n')
+            fout.write(r'\enddata' + '\n')
+    else:
+        with open(f'{outputpath}/{newfile}', 'w') as fout: 
+            fout.write(r'\providecommand{\bjdtdb}{\ensuremath{\rm {BJD_{TDB}}}}'+'\n'+
+        r'\providecommand{\feh}{\ensuremath{\left[{\rm Fe}/{\rm H}\right]}}'+'\n'+
+        r'\providecommand{\teff}{\ensuremath{T_{\rm eff}}}'+'\n'+
+        r'\providecommand{\teq}{\ensuremath{T_{\rm eq}}}'+'\n'+
+        r'\providecommand{\ecosw}{\ensuremath{e\cos{\omega_*}}}'+'\n'+
+        r'\providecommand{\esinw}{\ensuremath{e\sin{\omega_*}}}'+'\n'+
+        r'\providecommand{\msun}{\ensuremath{\,M_\Sun}}'+'\n'+
+        r'\providecommand{\rsun}{\ensuremath{\,R_\Sun}}'+'\n'+
+        r'\providecommand{\lsun}{\ensuremath{\,L_\Sun}}'+'\n'+
+        r'\providecommand{\mj}{\ensuremath{\,M_{\rm J}}}'+'\n'+
+        r'\providecommand{\rj}{\ensuremath{\,R_{\rm J}}}'+'\n'+
+        r'\providecommand{\me}{\ensuremath{\,M_{\rm E}}}'+'\n'+
+        r'\providecommand{\re}{\ensuremath{\,R_{\rm E}}}'+'\n'+
+        r'\providecommand{\fave}{\langle F \rangle}'+'\n'+
+        r'\providecommand{\fluxcgs}{10$^9$ erg s$^{-1}$ cm$^{-2}$}'+'\n'+
+        r'\providecommand{\tess}{\textit{TESS}\xspace}'+'\n'+
+        r'\tablecolumns{' + str(len(target_list) + 2) + '}'+'\n'+
+        r'\tablehead{ & ' + namestring + '}'+'\n'+
+        r'\startdata'+'\n'+
+        #r'\hline \\' + '\n' + 
+        #r'\hline \\' + '\n' + 
+        r'\multicolumn{' + str(len(target_list) + 2) + r'}{l}{\textbf{Other identifiers}:} \\' + '\n' +
+        r'& \tess Input Catalog' + tic_id_str + r'\\' + '\n' +
+        r'& TYCHO-2' + tycho_id_str + r'\\'  + '\n' +
+        r'& 2MASS' + twomass_id_str + r'\\' + '\n' +
+        r'\hline' + '\n' +               
+        r'\multicolumn{' + str(len(target_list) + 2) + r'}{l}{\textbf{Astrometric Parameters}:} \\' + '\n' )
+
+            write(ra_arr, fout)
+            write(dec_arr, fout)
+            write(pmra_arr, fout)
+            write(pmdec_arr, fout)
+            write(parallax_arr, fout)
+            write(vsini_arr, fout)
+            fout.write(r'\multicolumn{' + str(len(TIC_IDs) + 2) + r'}{l}{\textbf{Photometric Parameters}:} \\' + '\n')
+            write(gaia_g_arr, fout)
+            write(gaia_bp_arr, fout)
+            write(gaia_rp_arr, fout)
+            write(tmag_arr, fout)
+            write(j_2mass_arr, fout)
+            write(h_2mass_arr, fout)
+            write(k_2mass_arr, fout)
+            write(wise1_arr, fout)
+            write(wise2_arr, fout)
+            write(wise3_arr, fout)
+            write(wise4_arr, fout)
+
+            fout.write(r'\enddata' + '\n')
     
 
 def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.'):
