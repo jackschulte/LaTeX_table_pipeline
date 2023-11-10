@@ -825,7 +825,8 @@ def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.'):
                 dilute_colname = (match[0])
         dilution_prior_mean = priortable.meanvalue[priortable.variable == dilute_colname].iloc[0]
         dilution_prior_stdev = priortable.stdev[priortable.variable == dilute_colname].iloc[0]
-        dilution_prior += (r'& $\mathcal{G}$[' + round_sig_figs(dilution_prior_mean, 5) + r', ' + round_sig_figs(dilution_prior_stdev, 5) + r'] ')
+        dilution_prior += (r'& $\mathcal{G}$[' + round_sig_figs(dilution_prior_mean, 5) + r', ' + remove_sci_notation(float(round_sig_figs(dilution_prior_stdev, 5))) + r'] ')
+        # above line should be cleaned up in a future version. Maybe make a new function that removes scientific notation and sets sig figs for all numbers
 
 
     # Generating the preamble
