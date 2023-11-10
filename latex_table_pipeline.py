@@ -14,6 +14,12 @@ from astropy.coordinates import Angle
 from grab_tres_vsini import grab_tres_vsini
 import re
 
+def remove_sci_notation(x):
+    return np.format_float_positional(x, trim='-')
+
+def round_sig_figs(x, num_sig_figs):
+    return '{:g}'.format(float('{:.{p}g}'.format(x, p=num_sig_figs)))
+
 def grab_medians(name, path, file_prefix = '.MIST.SED.'):
     '''
     Collects median values from EXOFASTv2 output files at the defined path.
@@ -29,6 +35,21 @@ def grab_medians(name, path, file_prefix = '.MIST.SED.'):
 
     medians = pd.read_csv(path + name + file_prefix + 'median.csv', names=median_names, header=None, skiprows=1)
     return medians
+
+def grab_priors(name, path):
+    '''
+    Collects prior values from a prior file labeled 'toi####.priors.final'
+
+    Parameters
+    -----------
+    name: name of the system. Ex: 'TOI-1855'
+    path: path to the fit files. Ex: '/Users/jack/Research/pipelines/system_figure_pipeline/data/'
+    '''
+
+    toinumber = re.sub('TOI-', '', name)
+    columns = ['variable', 'meanvalue', 'stdev', 'low_bound', 'up_bound', 'starting_value'] # these column names only make sense for gaussian column names
+    priors = pd.read_csv(path + 'toi' + toinumber + '.priors.final', sep='\s+', skiprows=1, header=None, comment='#', names=columns) 
+    return priors
 
 def make_median_string(medians, param, array):
     '''
@@ -46,8 +67,6 @@ def make_median_string(medians, param, array):
     
         uperr = medians.upper_error[medians.parname == param].iloc[0]
         loerr = medians.lower_error[medians.parname == param].iloc[0]
-
-        remove_sci_notation = lambda x: np.format_float_positional(x, trim='-')
 
         uperr = remove_sci_notation(uperr)
         loerr = remove_sci_notation(loerr)
@@ -138,16 +157,13 @@ def lit_table(target_list, path, outputpath='.', vsini_type='gaia', vsini_extern
     
     # grabbing vsini from the TRES/CHIRON site
 
-    round_3sigfig = lambda x: '{:g}'.format(float('{:.{p}g}'.format(x, p=3)))
-    round_2sigfig = lambda x: '{:g}'.format(float('{:.{p}g}'.format(x, p=2)))
-
     vsini_tres = []
     vsini_tres_err = []
     if vsini_type == 'tres':
         for ticid in TIC_IDs:
             vsini, vsini_err = grab_tres_vsini(tres_username, tres_password, ticid)
-            vsini_tres.append(round_3sigfig(vsini))
-            vsini_tres_err.append(round_2sigfig(vsini_err))
+            vsini_tres.append(round_sig_figs(vsini, 3))
+            vsini_tres_err.append(round_sig_figs(vsini_err, 2))
 
     # initializing rows
     ra_arr=[r'$\alpha_{J2000}\ddagger$ & Right Ascension (h:m:s) ']
@@ -786,6 +802,32 @@ def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.'):
         colstring+='c'
         namestring += (' & \colhead{' + target_list[ii] + '}')
 
+    # Collecting priors to put at the top of the table
+
+    parallax_prior = '' # initializing strings
+    metallicity_prior = ''
+    extinction_prior = ''
+    dilution_prior = ''
+    for ii in range(len(target_list)):
+        priortable = grab_priors(target_list[ii], path)
+        parallax_prior_mean = priortable.meanvalue[priortable.variable == 'parallax'].iloc[0]
+        parallax_prior_stdev = priortable.stdev[priortable.variable == 'parallax'].iloc[0]
+        parallax_prior += (r'& $\mathcal{G}$[' + round_sig_figs(parallax_prior_mean, 5) + r', ' + round_sig_figs(parallax_prior_stdev, 5) + r'] ')
+        metallicity_prior_mean = priortable.meanvalue[priortable.variable == 'feh'].iloc[0]
+        metallicity_prior_stdev = priortable.stdev[priortable.variable == 'feh'].iloc[0]
+        metallicity_prior += (r'& $\mathcal{G}$[' + round_sig_figs(metallicity_prior_mean, 5) + r', ' + round_sig_figs(metallicity_prior_stdev, 5) + r'] ')
+        extinction_prior_upperbound = priortable.up_bound[priortable.variable == 'Av'].iloc[0]
+        extinction_prior += (r'& $\mathcal{U}$[0, ' + round_sig_figs(extinction_prior_upperbound, 5) + r'] ')
+
+        for x in priortable.variable: # finding the dilution term
+            match = re.findall('dilute_\d', x)
+            if len(match) > 0:
+                dilute_colname = (match[0])
+        dilution_prior_mean = priortable.meanvalue[priortable.variable == dilute_colname].iloc[0]
+        dilution_prior_stdev = priortable.stdev[priortable.variable == dilute_colname].iloc[0]
+        dilution_prior += (r'& $\mathcal{G}$[' + round_sig_figs(dilution_prior_mean, 5) + r', ' + round_sig_figs(dilution_prior_stdev, 5) + r'] ')
+
+
     # Generating the preamble
     
     with open(f'{outputpath}/{newfile}', 'w') as fout: 
@@ -811,10 +853,10 @@ def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.'):
     #r'\hline \\' + '\n' + 
     #r'\hline \\' + '\n' + 
     r'\multicolumn{' + str(len(target_list) + 2) + r'}{l}{\textbf{Priors}:} \\' + '\n' +
-    r'$\pi$ (Gaussian) & Gaia Parallax (mas) & \\'  + '\n' +
-    r'$[{\rm Fe/H}]$ (Gaussian) & Metallicity (dex) & \\' + '\n' +
-    r'$A_V$ (upper limit) & V-band extinction (mag) & \\' + '\n' + 
-    r'$D_T$ (Gaussian) & Dilution in \tess & \\' + '\n' +
+    r'$\pi$ & Gaia Parallax (mas)' + parallax_prior + r'\\' + '\n' +
+    r'$[{\rm Fe/H}]$ & Metallicity (dex)' + metallicity_prior + r'\\' + '\n' +
+    r'$A_V$ & V-band extinction (mag)' + extinction_prior + r'\\' + '\n' + 
+    r'$D_T$ & Dilution in \tess' + dilution_prior + r'\\' + '\n' +
     r'\hline' + '\n' +               
     r'\multicolumn{' + str(len(target_list) + 2) + r'}{l}{\textbf{Stellar Parameters}:} \\' + '\n' )
     #r'\smallskip\\\multicolumn{2}{l}{Stellar Parameters:}&\smallskip\\'+'\n')
