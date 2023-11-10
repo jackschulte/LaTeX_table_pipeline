@@ -12,6 +12,7 @@ from astropy.coordinates import SkyCoord
 from astroquery.vizier import Vizier
 from astropy.coordinates import Angle
 from grab_tres_vsini import grab_tres_vsini
+import re
 
 def grab_medians(name, path, file_prefix = '.MIST.SED.'):
     '''
@@ -86,22 +87,23 @@ def write(param_arr,file):
         file.write(ii)
     file.write(r'\\'+'\n')
 
-def lit_table(target_list, outputpath='.', vsini_type='gaia', vsini_external=None, tres_username=None, tres_password=None, add_source_column=False):
+def lit_table(target_list, path, outputpath='.', vsini_type='gaia', vsini_external=None, tres_username=None, tres_password=None, 
+              add_source_column=False, grab_mags_from_sedfile=True):
     '''
     Generates a 'literature' table, using photometric and astrometric parameters from Gaia, 2MASS, and WISE. Optionally
     grabs vsini measurements from TRES. WARNING: Collecting TRES vsini measurements will increase runtime by ~4 min.
-
-    WARNING: Between the source column and target columns, there can only be a maximum of 5 columns.
     
     Parameters
     -----------
     target_list: an array of strings containing the names of each target. Nominally, these should be TOI IDs. Ex: ['TOI-1855', 'TOI-2107']
+    path: path of EXOFASTv2 output files
     outputpath: the folder in which the table should be generated. Current working directory by default
     vsini_type: Accepts 'gaia' to use Gaia's vbroad, 'tres' to scrape the TRES/CHIRON site (tess.exoplanets.dk), or 'external' to provide an external array of vsini values
     vsini_external: N by 2 array containing vsini (first column) and vsini_err (second column) from an external source
     tres_username: String including the user's TRES website username if vsini_type='tres'
     tres_passworde: String including the user's TRES website password if vsini_type='tres'
     add_source_column: a boolean to determine whether a source column is added.
+    grab_mags_from_sedfile: a boolean to determine whether the magnitudes are collected from an EXOFAST SED file instead of astroquery
     '''
 
     # Setting up to save the table as a .tex file
@@ -171,12 +173,13 @@ def lit_table(target_list, outputpath='.', vsini_type='gaia', vsini_external=Non
     tic_id_str=''
     tycho_id_str=''
     twomass_id_str=''
+    gaia_id_str=''
 
     # query for data and build rows
     for i in range(len(TIC_IDs)):
         # querying for data
         gaia_columns=['RA_ICRS', 'DE_ICRS', 'Gmag', 'e_Gmag', 'BPmag', 'e_BPmag', 'RPmag', 'e_RPmag', 'pmRA', \
-            'e_pmRA', 'pmDE', 'e_pmDE', 'Plx', 'e_Plx', 'Vbroad', 'e_Vbroad', 'TYC2', '2MASS']
+            'e_pmRA', 'pmDE', 'e_pmDE', 'Plx', 'e_Plx', 'Vbroad', 'e_Vbroad', 'TYC2', '2MASS', 'DR3Name']
         vgaia = Vizier(columns=gaia_columns, catalog='I/355/gaiadr3')
         data_gaia = vgaia.query_region('TIC ' + str(TIC_IDs[i]), radius=Angle(0.001, "deg"))
 
@@ -204,7 +207,11 @@ def lit_table(target_list, outputpath='.', vsini_type='gaia', vsini_external=Non
             twomass_id_str += (' & J' + twomass_id)
         else:
             twomass_id_str += ' & ---'
+        gaia_id = data_gaia[0]['DR3Name'][0]
+        gaia_id = re.sub('Gaia DR3 ', '', gaia_id) # removing prefix
+        gaia_id_str += (f' & {gaia_id}')
 
+        # Grabbing and formatting RA/Dec
         ra = data_gaia[0]['RA_ICRS'][0]
         ra_angle = Angle(ra, 'deg')
         ra_hr = int(ra_angle.hms[0])
@@ -230,29 +237,64 @@ def lit_table(target_list, outputpath='.', vsini_type='gaia', vsini_external=Non
             dec_sec = f'0{dec_sec}'
         dec_str = f'{dec_deg}:{dec_min}:{dec_sec}'
 
-        gaia_g = data_gaia[0]['Gmag'][0]
-        gaia_g_err = data_gaia[0]['e_Gmag'][0]
-        gaia_bp = data_gaia[0]['BPmag'][0]
-        gaia_bp_err = data_gaia[0]['e_BPmag'][0]
-        gaia_rp = data_gaia[0]['RPmag'][0]
-        gaia_rp_err = data_gaia[0]['e_RPmag'][0]
+        # Grabbing the used magnitudes from SED files
+        if grab_mags_from_sedfile == True:
+            wise4count = 0 # WISE4 magnitudes are often not reported or used for any targets. This variable keeps track of the WISE4 mags in fits
 
-        j_2mass = data_2MASS[0]['Jmag'][0]
-        j_2mass_err = data_2MASS[0]['e_Jmag'][0]
-        h_2mass = data_2MASS[0]['Hmag'][0]
-        h_2mass_err = data_2MASS[0]['e_Hmag'][0]
-        k_2mass = data_2MASS[0]['Kmag'][0]
-        k_2mass_err = data_2MASS[0]['e_Kmag'][0]
+            columns = ['bandname', 'magnitude', 'used_errors', 'catalog_errors']
+            sedtable = pd.read_csv(path + 'toi1855.sed', sep='\s+', skiprows=1, header=None, names=columns)
+            gaia_g = sedtable.magnitude[sedtable.bandname == 'Gaia'].iloc[0]
+            gaia_g_err = sedtable.used_errors[sedtable.bandname == 'Gaia'].iloc[0]
+            gaia_bp = sedtable.magnitude[sedtable.bandname == 'GaiaBP'].iloc[0]
+            gaia_bp_err = sedtable.used_errors[sedtable.bandname == 'GaiaBP'].iloc[0]
+            gaia_rp = sedtable.magnitude[sedtable.bandname == 'GaiaRP'].iloc[0]
+            gaia_rp_err = sedtable.used_errors[sedtable.bandname == 'GaiaRP'].iloc[0]
 
-        wise1 = data_WISE[0]['W1mag'][0]
-        wise1_err = data_WISE[0]['e_W1mag'][0]
-        wise2 = data_WISE[0]['W2mag'][0]
-        wise2_err = data_WISE[0]['e_W2mag'][0]
-        wise3 = data_WISE[0]['W3mag'][0]
-        wise3_err = data_WISE[0]['e_W3mag'][0]
-        wise4 = data_WISE[0]['W4mag'][0]
-        wise4_err = data_WISE[0]['e_W4mag'][0]
+            j_2mass = sedtable.magnitude[sedtable.bandname == 'J2M'].iloc[0]
+            j_2mass_err = sedtable.used_errors[sedtable.bandname == 'J2M'].iloc[0]
+            h_2mass = sedtable.magnitude[sedtable.bandname == 'H2M'].iloc[0]
+            h_2mass_err = sedtable.used_errors[sedtable.bandname == 'H2M'].iloc[0]
+            k_2mass = sedtable.magnitude[sedtable.bandname == 'K2M'].iloc[0]
+            k_2mass_err = sedtable.used_errors[sedtable.bandname == 'K2M'].iloc[0]
 
+            wise1 = sedtable.magnitude[sedtable.bandname == 'WISE1'].iloc[0]
+            wise1_err = sedtable.used_errors[sedtable.bandname == 'WISE1'].iloc[0]
+            wise2 = sedtable.magnitude[sedtable.bandname == 'WISE2'].iloc[0]
+            wise2_err = sedtable.used_errors[sedtable.bandname == 'WISE2'].iloc[0]
+            wise3 = sedtable.magnitude[sedtable.bandname == 'WISE3'].iloc[0]
+            wise3_err = sedtable.used_errors[sedtable.bandname == 'WISE3'].iloc[0]
+            if sedtable.bandname.isin(['WISE4']).any():
+                wise4 = sedtable.magnitude[sedtable.bandname == 'WISE4'].iloc[0]
+                wise4_err = sedtable.used_errors[sedtable.bandname == 'WISE4'].iloc[0]
+                wise4count += 1
+            else:
+                wise4 = None
+                wise4_err = None
+        else:
+            gaia_g = data_gaia[0]['Gmag'][0]
+            gaia_g_err = data_gaia[0]['e_Gmag'][0]
+            gaia_bp = data_gaia[0]['BPmag'][0]
+            gaia_bp_err = data_gaia[0]['e_BPmag'][0]
+            gaia_rp = data_gaia[0]['RPmag'][0]
+            gaia_rp_err = data_gaia[0]['e_RPmag'][0]
+
+            j_2mass = data_2MASS[0]['Jmag'][0]
+            j_2mass_err = data_2MASS[0]['e_Jmag'][0]
+            h_2mass = data_2MASS[0]['Hmag'][0]
+            h_2mass_err = data_2MASS[0]['e_Hmag'][0]
+            k_2mass = data_2MASS[0]['Kmag'][0]
+            k_2mass_err = data_2MASS[0]['e_Kmag'][0]
+
+            wise1 = data_WISE[0]['W1mag'][0]
+            wise1_err = data_WISE[0]['e_W1mag'][0]
+            wise2 = data_WISE[0]['W2mag'][0]
+            wise2_err = data_WISE[0]['e_W2mag'][0]
+            wise3 = data_WISE[0]['W3mag'][0]
+            wise3_err = data_WISE[0]['e_W3mag'][0]
+            wise4 = data_WISE[0]['W4mag'][0]
+            wise4_err = data_WISE[0]['e_W4mag'][0]
+
+        # grabbing astrometric parameters
         pmra = data_gaia[0]['pmRA'][0]
         pmra_err = data_gaia[0]['e_pmRA'][0]
         pmdec = data_gaia[0]['pmDE'][0]
@@ -303,7 +345,8 @@ def lit_table(target_list, outputpath='.', vsini_type='gaia', vsini_external=Non
         add_source(wise1_arr, 5) # 5 corresponds to WISE
         add_source(wise2_arr, 5)
         add_source(wise3_arr, 5)
-        add_source(wise4_arr, 5)
+        if wise4count > 0:
+            add_source(wise4_arr, 5)
 
     # Generating the preamble
     colstring = 'lc'
@@ -340,6 +383,7 @@ def lit_table(target_list, outputpath='.', vsini_type='gaia', vsini_external=Non
         r'& \tess Input Catalog' + tic_id_str + r'\\' + '\n' +
         r'& TYCHO-2' + tycho_id_str + r'\\'  + '\n' +
         r'& 2MASS' + twomass_id_str + r'\\' + '\n' +
+        r'& Gaia DR3' + gaia_id_str + r'\\' + '\n' +
         r'\hline' + '\n' +               
         r'\multicolumn{' + str(len(target_list) + 3) + r'}{l}{\textbf{Astrometric Parameters}:} \\' + '\n' )
 
@@ -360,7 +404,8 @@ def lit_table(target_list, outputpath='.', vsini_type='gaia', vsini_external=Non
             write(wise1_arr, fout)
             write(wise2_arr, fout)
             write(wise3_arr, fout)
-            write(wise4_arr, fout)
+            if wise4count > 0:
+                write(wise4_arr, fout)
 
             fout.write(r'\enddata' + '\n')
     else:
