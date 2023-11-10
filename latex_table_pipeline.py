@@ -148,8 +148,8 @@ def lit_table(target_list, outputpath='.', vsini_type='gaia', vsini_external=Non
             vsini_tres_err.append(round_2sigfig(vsini_err))
 
     # initializing rows
-    ra_arr=[r'$\alpha_{J2000}\ddagger$ & Right Ascension (RA) ']
-    dec_arr=[r'$\delta_{J2000}\ddagger$ & Declination (Dec) ']
+    ra_arr=[r'$\alpha_{J2000}\ddagger$ & Right Ascension (h:m:s) ']
+    dec_arr=[r'$\delta_{J2000}\ddagger$ & Declination (d:m:s) ']
     gaia_g_arr=[r'${\rm G}$ & Gaia $G$ mag. ']
     gaia_bp_arr=[r'$G_{\rm BP}$ & Gaia $G_{\rm BP}$ mag. ']
     gaia_rp_arr=[r'$G_{\rm RP}$ & Gaia $G_{\rm RP}$ mag. ']
@@ -162,7 +162,7 @@ def lit_table(target_list, outputpath='.', vsini_type='gaia', vsini_external=Non
     wise3_arr=[r'$W3$ & WISE $W3$ mag. ']
     wise4_arr=[r'$W4$ & WISE $W4$ mag. ']
     pmra_arr=[r'$\mu_{\alpha}$ & Gaia DR3 proper motion in RA (mas yr$^{-1}$)']
-    pmdec_arr=[r'$\mu_{\delta}$ & Gaia DR3 proper motion in DEC (mas yr$^{-1}$)']
+    pmdec_arr=[r'$\mu_{\delta}$ & Gaia DR3 proper motion in Dec (mas yr$^{-1}$)']
     parallax_arr=[r'$\pi^\dagger$ & Gaia DR3 Parallax (mas) ']
     vsini_arr=[r'$v\sin{i_\star}$ & Projected rotational velocity (km s$^{-1}$) ']
     # add note that vbroad includes other effects such as macroturbulence, template mismatch, and other instrumental effects
