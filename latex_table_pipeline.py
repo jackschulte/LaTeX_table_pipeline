@@ -178,7 +178,7 @@ def lit_table(target_list, path, outputpath='.', vsini_type='gaia', vsini_extern
     # query for data and build rows
     for i in range(len(TIC_IDs)):
         # querying for data
-        gaia_columns=['RA_ICRS', 'DE_ICRS', 'Gmag', 'e_Gmag', 'BPmag', 'e_BPmag', 'RPmag', 'e_RPmag', 'pmRA', \
+        gaia_columns=['RAJ2000', 'DEJ2000', 'Gmag', 'e_Gmag', 'BPmag', 'e_BPmag', 'RPmag', 'e_RPmag', 'pmRA', \
             'e_pmRA', 'pmDE', 'e_pmDE', 'Plx', 'e_Plx', 'Vbroad', 'e_Vbroad', 'TYC2', '2MASS', 'DR3Name']
         vgaia = Vizier(columns=gaia_columns, catalog='I/355/gaiadr3')
         data_gaia = vgaia.query_region('TIC ' + str(TIC_IDs[i]), radius=Angle(0.001, "deg"))
@@ -212,7 +212,7 @@ def lit_table(target_list, path, outputpath='.', vsini_type='gaia', vsini_extern
         gaia_id_str += (f' & {gaia_id}')
 
         # Grabbing and formatting RA/Dec
-        ra = data_gaia[0]['RA_ICRS'][0]
+        ra = data_gaia[0]['RAJ2000'][0]
         ra_angle = Angle(ra, 'deg')
         ra_hr = int(ra_angle.hms[0])
         if ra_hr < 10: # filling with zeroes to match hh:mm:ss format
@@ -224,7 +224,7 @@ def lit_table(target_list, path, outputpath='.', vsini_type='gaia', vsini_extern
         if ra_sec < 10:
             ra_sec = f'0{ra_sec}'
         ra_str = f'{ra_hr}:{ra_min}:{ra_sec}'
-        dec = data_gaia[0]['DE_ICRS'][0]
+        dec = data_gaia[0]['DEJ2000'][0]
         dec_angle = Angle(dec, 'deg')
         dec_deg = int(dec_angle.dms[0])
         if abs(dec_deg) < 10:
