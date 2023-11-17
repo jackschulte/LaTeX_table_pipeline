@@ -257,14 +257,23 @@ def lit_table(target_list, path, outputpath='.', vsini_type='gaia', vsini_extern
         if grab_mags_from_sedfile == True:
             wise4count = 0 # WISE4 magnitudes are often not reported or used for any targets. This variable keeps track of the WISE4 mags in fits
 
+            toinumber = re.sub('TOI-', '', target_list[i])
             columns = ['bandname', 'magnitude', 'used_errors', 'catalog_errors']
-            sedtable = pd.read_csv(path + 'toi1855.sed', sep='\s+', skiprows=1, header=None, names=columns)
-            gaia_g = sedtable.magnitude[sedtable.bandname == 'Gaia'].iloc[0]
-            gaia_g_err = sedtable.used_errors[sedtable.bandname == 'Gaia'].iloc[0]
-            gaia_bp = sedtable.magnitude[sedtable.bandname == 'GaiaBP'].iloc[0]
-            gaia_bp_err = sedtable.used_errors[sedtable.bandname == 'GaiaBP'].iloc[0]
-            gaia_rp = sedtable.magnitude[sedtable.bandname == 'GaiaRP'].iloc[0]
-            gaia_rp_err = sedtable.used_errors[sedtable.bandname == 'GaiaRP'].iloc[0]
+            sedtable = pd.read_csv(path + 'toi' + toinumber + '.sed', sep='\s+', skiprows=1, header=None, names=columns, comment='#')
+            if toinumber == '1855': # hardcoded because only DR2 was available in mkticsed
+                gaia_g = sedtable.magnitude[sedtable.bandname == 'Gaia'].iloc[0]
+                gaia_g_err = sedtable.used_errors[sedtable.bandname == 'Gaia'].iloc[0]
+                gaia_bp = sedtable.magnitude[sedtable.bandname == 'GaiaBP'].iloc[0]
+                gaia_bp_err = sedtable.used_errors[sedtable.bandname == 'GaiaBP'].iloc[0]
+                gaia_rp = sedtable.magnitude[sedtable.bandname == 'GaiaRP'].iloc[0]
+                gaia_rp_err = sedtable.used_errors[sedtable.bandname == 'GaiaRP'].iloc[0]
+            else:   
+                gaia_g = sedtable.magnitude[sedtable.bandname == 'Gaia_G_EDR3'].iloc[0]
+                gaia_g_err = sedtable.used_errors[sedtable.bandname == 'Gaia_G_EDR3'].iloc[0]
+                gaia_bp = sedtable.magnitude[sedtable.bandname == 'Gaia_BP_EDR3'].iloc[0]
+                gaia_bp_err = sedtable.used_errors[sedtable.bandname == 'Gaia_BP_EDR3'].iloc[0]
+                gaia_rp = sedtable.magnitude[sedtable.bandname == 'Gaia_RP_EDR3'].iloc[0]
+                gaia_rp_err = sedtable.used_errors[sedtable.bandname == 'Gaia_RP_EDR3'].iloc[0]
 
             j_2mass = sedtable.magnitude[sedtable.bandname == 'J2M'].iloc[0]
             j_2mass_err = sedtable.used_errors[sedtable.bandname == 'J2M'].iloc[0]
