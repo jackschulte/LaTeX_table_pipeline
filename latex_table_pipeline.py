@@ -1,14 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import sys
 import os
-import astropy
-import astropy.units as u
-import astropy.constants as const
-import glob
 import pandas as pd
-import matplotlib.colors as colors
-from astropy.coordinates import SkyCoord
 from astroquery.vizier import Vizier
 from astropy.coordinates import Angle
 from grab_tres_vsini import grab_tres_vsini
@@ -81,13 +74,23 @@ def make_median_string(medians, param, array):
     else:
         array.append('& ---')
 
-def gen_value_str(array, value, error=None):
+def gen_lit_str(array, value, error=None):
+    '''
+    Appends a string version of the literature value obtained via query to the appropriate list of strings
+
+    Parameters
+    -----------
+    array: the list/array to append the value string to
+    value: the value to append to the array
+    error: the error on that value, if there is one
+    '''
+
     if (value == None) or (isinstance(value, np.ma.core.MaskedConstant)):
-        array.append('& --- ')
+        array.append('& --- ') # if the value doesn't exist in the query, add in the filler
     elif (error == None) or (isinstance(error, np.ma.core.MaskedConstant)):
-        array.append(r'& ' + str(value) + ' ')
+        array.append(r'& ' + str(value) + ' ') # if there's no error, only append the value
     else:
-        array.append(r'& $' + str(value) + r' \pm ' + str(error) + '$ ')
+        array.append(r'& $' + str(value) + r' \pm ' + str(error) + '$ ') # if there's a value and associated error, append them both
 
 def add_source(array, source):
     '''
@@ -329,28 +332,28 @@ def lit_table(target_list, path, outputpath='.', vsini_type='gaia', vsini_extern
         vbroad = data_gaia[0]['Vbroad'][0]
         vbroad_err = data_gaia[0]['e_Vbroad'][0]
 
-        gen_value_str(ra_arr, ra_str)
-        gen_value_str(dec_arr, dec_str)
-        gen_value_str(gaia_g_arr, gaia_g, gaia_g_err)
-        gen_value_str(gaia_bp_arr, gaia_bp, gaia_bp_err)
-        gen_value_str(gaia_rp_arr, gaia_rp, gaia_rp_err)
-        gen_value_str(tmag_arr, TESS_mags[i], TESS_mags_err[i])
-        gen_value_str(j_2mass_arr, j_2mass, j_2mass_err)
-        gen_value_str(h_2mass_arr, h_2mass, h_2mass_err)
-        gen_value_str(k_2mass_arr, k_2mass, k_2mass_err)
-        gen_value_str(wise1_arr, wise1, wise1_err)
-        gen_value_str(wise2_arr, wise2, wise2_err)
-        gen_value_str(wise3_arr, wise3, wise3_err)
-        gen_value_str(wise4_arr, wise4, wise4_err)
-        gen_value_str(pmra_arr, pmra, pmra_err)
-        gen_value_str(pmdec_arr, pmdec, pmdec_err)
-        gen_value_str(parallax_arr, parallax, parallax_err)
+        gen_lit_str(ra_arr, ra_str)
+        gen_lit_str(dec_arr, dec_str)
+        gen_lit_str(gaia_g_arr, gaia_g, gaia_g_err)
+        gen_lit_str(gaia_bp_arr, gaia_bp, gaia_bp_err)
+        gen_lit_str(gaia_rp_arr, gaia_rp, gaia_rp_err)
+        gen_lit_str(tmag_arr, TESS_mags[i], TESS_mags_err[i])
+        gen_lit_str(j_2mass_arr, j_2mass, j_2mass_err)
+        gen_lit_str(h_2mass_arr, h_2mass, h_2mass_err)
+        gen_lit_str(k_2mass_arr, k_2mass, k_2mass_err)
+        gen_lit_str(wise1_arr, wise1, wise1_err)
+        gen_lit_str(wise2_arr, wise2, wise2_err)
+        gen_lit_str(wise3_arr, wise3, wise3_err)
+        gen_lit_str(wise4_arr, wise4, wise4_err)
+        gen_lit_str(pmra_arr, pmra, pmra_err)
+        gen_lit_str(pmdec_arr, pmdec, pmdec_err)
+        gen_lit_str(parallax_arr, parallax, parallax_err)
         if vsini_type == 'gaia':
-            gen_value_str(vsini_arr, vbroad, vbroad_err)
+            gen_lit_str(vsini_arr, vbroad, vbroad_err)
         elif vsini_type == 'tres':
-            gen_value_str(vsini_arr, vsini_tres[i], vsini_tres_err[i])
+            gen_lit_str(vsini_arr, vsini_tres[i], vsini_tres_err[i])
         elif vsini_type == 'external':
-            gen_value_str(vsini_arr, vsini_external[i][0], vsini_external[i][1])
+            gen_lit_str(vsini_arr, vsini_external[i][0], vsini_external[i][1])
 
     if add_source_column == True:
         # adding sources to the rows
@@ -410,7 +413,7 @@ def lit_table(target_list, path, outputpath='.', vsini_type='gaia', vsini_extern
         r'& 2MASS' + twomass_id_str + r'\\' + '\n' +
         r'& Gaia DR3' + gaia_id_str + r'\\' + '\n' +
         r'\hline' + '\n' +               
-        r'\multicolumn{' + str(len(target_list) + 3) + r'}{l}{\textbf{Astrometric Parameters}:} \\' + '\n' )
+        r'\multicolumn{' + str(len(target_list) + 3) + r'}{l}{\textbf{Astrometric Parameters}:} \\' + '\n' ) # subheading for astrometry
 
             write(ra_arr, fout)
             write(dec_arr, fout)
@@ -418,7 +421,7 @@ def lit_table(target_list, path, outputpath='.', vsini_type='gaia', vsini_extern
             write(pmdec_arr, fout)
             write(parallax_arr, fout)
             write(vsini_arr, fout)
-            fout.write(r'\multicolumn{' + str(len(TIC_IDs) + 3) + r'}{l}{\textbf{Photometric Parameters}:} \\' + '\n')
+            fout.write(r'\multicolumn{' + str(len(TIC_IDs) + 3) + r'}{l}{\textbf{Photometric Parameters}:} \\' + '\n') # subheading for photometry
             write(gaia_g_arr, fout)
             write(gaia_bp_arr, fout)
             write(gaia_rp_arr, fout)
