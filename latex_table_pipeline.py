@@ -13,7 +13,7 @@ def remove_sci_notation(x):
 def round_sig_figs(x, num_sig_figs):
     return '{:g}'.format(float('{:.{p}g}'.format(x, p=num_sig_figs)))
 
-def grab_medians(name, path, file_prefix = '.MIST.SED.'):
+def grab_medians(name, path, file_prefix = '.MIST.SED.', bimodal=False):
     '''
     Collects median values from EXOFASTv2 output files at the defined path.
 
@@ -25,8 +25,10 @@ def grab_medians(name, path, file_prefix = '.MIST.SED.'):
     '''
 
     median_names= ['parname', 'median_value', 'upper_error', 'lower_error']
-
-    medians = pd.read_csv(path + name + file_prefix + 'median.csv', names=median_names, header=None, skiprows=1)
+    if bimodal == False:
+        medians = pd.read_csv(path + name + file_prefix + 'median.csv', names=median_names, header=None, skiprows=1)
+    else:
+        medians = pd.read_csv(path + name + file_prefix + '.csv', names=median_names, header=None, skiprows=1)
     return medians
 
 def grab_priors(name, path):
@@ -480,7 +482,7 @@ def lit_table(target_list, path, outputpath='.', vsini_type='gaia', vsini_extern
             fout.write(r'\enddata' + '\n')
     
 
-def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.'):
+def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.', bimodal=False):
     '''
     Generates a median table given the path to EXOFASTv2 output files.
 
@@ -657,7 +659,7 @@ def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.'):
     
     for ii in range(len(target_list)):
 
-        medians = grab_medians(target_list[ii], path, file_prefix=file_prefix)
+        medians = grab_medians(target_list[ii], path, file_prefix=file_prefix, bimodal=bimodal)
 
         if Mstar ==True: 
             make_median_string(medians,'mstar',mstars)
@@ -807,30 +809,30 @@ def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.'):
         namestring += (' & \colhead{' + target_list[ii] + '}')
 
     # Collecting priors to put at the top of the table
-
     parallax_prior = '' # initializing strings
     metallicity_prior = ''
     extinction_prior = ''
     dilution_prior = ''
-    for ii in range(len(target_list)):
-        priortable = grab_priors(target_list[ii], path)
-        parallax_prior_mean = priortable.meanvalue[priortable.variable == 'parallax'].iloc[0]
-        parallax_prior_stdev = priortable.stdev[priortable.variable == 'parallax'].iloc[0]
-        parallax_prior += (r'& $\mathcal{G}$[' + round_sig_figs(parallax_prior_mean, 5) + r', ' + round_sig_figs(parallax_prior_stdev, 5) + r'] ')
-        metallicity_prior_mean = priortable.meanvalue[priortable.variable == 'feh'].iloc[0]
-        metallicity_prior_stdev = priortable.stdev[priortable.variable == 'feh'].iloc[0]
-        metallicity_prior += (r'& $\mathcal{G}$[' + round_sig_figs(metallicity_prior_mean, 5) + r', ' + round_sig_figs(metallicity_prior_stdev, 5) + r'] ')
-        extinction_prior_upperbound = priortable.up_bound[priortable.variable == 'Av'].iloc[0]
-        extinction_prior += (r'& $\mathcal{U}$[0, ' + round_sig_figs(extinction_prior_upperbound, 5) + r'] ')
+    if bimodal == False:
+        for ii in range(len(target_list)):
+            priortable = grab_priors(target_list[ii], path)
+            parallax_prior_mean = priortable.meanvalue[priortable.variable == 'parallax'].iloc[0]
+            parallax_prior_stdev = priortable.stdev[priortable.variable == 'parallax'].iloc[0]
+            parallax_prior += (r'& $\mathcal{G}$[' + round_sig_figs(parallax_prior_mean, 5) + r', ' + round_sig_figs(parallax_prior_stdev, 5) + r'] ')
+            metallicity_prior_mean = priortable.meanvalue[priortable.variable == 'feh'].iloc[0]
+            metallicity_prior_stdev = priortable.stdev[priortable.variable == 'feh'].iloc[0]
+            metallicity_prior += (r'& $\mathcal{G}$[' + round_sig_figs(metallicity_prior_mean, 5) + r', ' + round_sig_figs(metallicity_prior_stdev, 5) + r'] ')
+            extinction_prior_upperbound = priortable.up_bound[priortable.variable == 'Av'].iloc[0]
+            extinction_prior += (r'& $\mathcal{U}$[0, ' + round_sig_figs(extinction_prior_upperbound, 5) + r'] ')
 
-        for x in priortable.variable: # finding the dilution term
-            match = re.findall('dilute_\d', x)
-            if len(match) > 0:
-                dilute_colname = (match[0])
-        dilution_prior_mean = priortable.meanvalue[priortable.variable == dilute_colname].iloc[0]
-        dilution_prior_stdev = priortable.stdev[priortable.variable == dilute_colname].iloc[0]
-        dilution_prior += (r'& $\mathcal{G}$[' + round_sig_figs(dilution_prior_mean, 5) + r', ' + remove_sci_notation(float(round_sig_figs(dilution_prior_stdev, 5))) + r'] ')
-        # above line should be cleaned up in a future version. Maybe make a new function that removes scientific notation and sets sig figs for all numbers
+            for x in priortable.variable: # finding the dilution term
+                match = re.findall('dilute_\d', x)
+                if len(match) > 0:
+                    dilute_colname = (match[0])
+            dilution_prior_mean = priortable.meanvalue[priortable.variable == dilute_colname].iloc[0]
+            dilution_prior_stdev = priortable.stdev[priortable.variable == dilute_colname].iloc[0]
+            dilution_prior += (r'& $\mathcal{G}$[' + round_sig_figs(dilution_prior_mean, 5) + r', ' + remove_sci_notation(float(round_sig_figs(dilution_prior_stdev, 5))) + r'] ')
+            # above line should be cleaned up in a future version. Maybe make a new function that removes scientific notation and sets sig figs for all numbers
 
 
     # Generating the preamble
