@@ -13,37 +13,75 @@ def remove_sci_notation(x):
 def round_sig_figs(x, num_sig_figs):
     return '{:g}'.format(float('{:.{p}g}'.format(x, p=num_sig_figs)))
 
-def grab_medians(name, path, file_prefix = '.MIST.SED.', bimodal=False):
+def grab_medians(path, file_prefix, bimodal=False):
     '''
     Collects median values from EXOFASTv2 output files at the defined path.
 
     Parameters
     -----------
-    name: name of the system. Ex: 'TOI-1855'
     path: path to the fit files. Ex: '/Users/jack/Research/pipelines/system_figure_pipeline/data/'
-    file_prefix: prefix used in EXOFASTv2 output files
+    file_prefix: prefix used in EXOFASTv2 output files. Ex: 'toi1855'
+    bimodal: boolean to decide whether or not to use the files that are output by splitpdf.pro
     '''
 
-    median_names= ['parname', 'median_value', 'upper_error', 'lower_error']
+    median_names= ['parname', 'median_value', 'upper_error', 'lower_error', 'scinot']
     if bimodal == False:
-        medians = pd.read_csv(path + name + file_prefix + 'median.csv', names=median_names, header=None, skiprows=1)
+        medians = pd.read_csv(path + file_prefix + '.median.csv', names=median_names, header=None, skiprows=1)
     else:
-        medians = pd.read_csv(path + name + file_prefix + '.csv', names=median_names, header=None, skiprows=1)
-    return medians
+        medians = pd.read_csv(path + file_prefix + '.csv', names=median_names, header=None, skiprows=1)
 
-def grab_priors(name, path):
+    medians_corrected = medians.copy()
+    for i in range(len(medians_corrected)):
+        median_corrections = median_scinot_corrections(medians, medians_corrected.parname[i])
+        medians_corrected.loc[i, 'median_value'] = median_corrections[0]
+        medians_corrected.loc[i, 'upper_error'] = median_corrections[1]
+        medians_corrected.loc[i, 'lower_error'] = median_corrections[2]
+    return medians_corrected
+
+def median_scinot_corrections(median, parname):
+    '''
+    Multiplies parameters in the EXOFASTv2 median table by the scientific notation exponent.
+
+    median: pandas DataFrame for median table
+    param: input parameter name
+    '''
+
+    scinot = median.scinot[median.parname==parname].iloc[0]
+
+    if type(scinot) == str:
+        exp_search = re.findall(r'\\times 10\^{(.*)}', scinot)
+        exponent = int(exp_search[0])
+    else:
+        exponent = 0
+
+    param = median.median_value[median.parname==parname].iloc[0]
+    param_corrected = param * 10**exponent
+
+    uperr = median.upper_error[median.parname==parname].iloc[0]
+    uperr_corrected = uperr * 10**exponent
+
+    lowerr = median.lower_error[median.parname==parname].iloc[0]
+    lowerr_corrected = lowerr * 10**exponent
+    return param_corrected, uperr_corrected, lowerr_corrected
+
+def grab_priors(file_prefix, path):
     '''
     Collects prior values from a prior file labeled 'toi####.priors.final'
 
     Parameters
     -----------
-    name: name of the system. Ex: 'TOI-1855'
+    file_prefix: prefix used in EXOFASTv2 output files. Ex: 'toi1855'
     path: path to the fit files. Ex: '/Users/jack/Research/pipelines/system_figure_pipeline/data/'
     '''
 
-    toinumber = re.sub('TOI-', '', name)
     columns = ['variable', 'meanvalue', 'stdev', 'low_bound', 'up_bound', 'starting_value'] # these column names only make sense for gaussian column names
-    priors = pd.read_csv(path + 'toi' + toinumber + '.priors.final', sep='\s+', skiprows=1, header=None, comment='#', names=columns) 
+    priors = pd.read_csv(path + file_prefix + '.priors.final', sep='\s+', skiprows=1, header=None, comment='#', names=columns)
+
+    for i in range(len(priors)):
+        if type(priors.meanvalue[i]) == str:
+            if 'dilute' in priors.meanvalue[i]:
+                priors.drop(index=i, inplace=True) # drop instances where dilution priors are linked
+    priors['meanvalue'] = priors['meanvalue'].astype(float) # to ensure that all mean values are floats
     return priors
 
 def make_median_string(medians, param, array):
@@ -67,7 +105,7 @@ def make_median_string(medians, param, array):
         loerr = remove_sci_notation(loerr)
 
         if uperr==loerr:
-            errstring = r'\pm ' + str(uperr)
+            errstring = r' \pm ' + str(uperr)
         else:
             errstring = r'^{+'+ str(uperr) + '}_{-' + str(loerr) + '}'
         array.append('& $' + str(medians.median_value[medians.parname == param].iloc[0]))
@@ -111,7 +149,7 @@ def write(param_arr,file):
         file.write(ii)
     file.write(r'\\'+'\n')
 
-def lit_table(target_list, path, outputpath='.', vsini_type='gaia', vsini_external=None, tres_username=None, tres_password=None, 
+def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='gaia', vsini_external=None, tres_username=None, tres_password=None, 
               add_source_column=False, grab_mags_from_sedfile=True):
     '''
     Generates a 'literature' table, using photometric and astrometric parameters from Gaia, 2MASS, and WISE. Optionally
@@ -121,6 +159,7 @@ def lit_table(target_list, path, outputpath='.', vsini_type='gaia', vsini_extern
     -----------
     target_list: an array of strings containing the names of each target. Nominally, these should be TOI IDs. Ex: ['TOI-1855', 'TOI-2107']
     path: path of EXOFASTv2 output files
+    file_prefix: an array of strings containing the file prefix used in each EXOFASTv2 fit. Only necessary if grab_mags_from_sedfile=True
     outputpath: the folder in which the table should be generated. Current working directory by default
     vsini_type: Accepts 'gaia' to use Gaia's vbroad, 'tres' to scrape the TRES/CHIRON site (tess.exoplanets.dk), or 'external' to provide an external array of vsini values
     vsini_external: N by 2 array containing vsini (first column) and vsini_err (second column) from an external source
@@ -266,9 +305,8 @@ def lit_table(target_list, path, outputpath='.', vsini_type='gaia', vsini_extern
         if grab_mags_from_sedfile == True:
             wise4count = 0 # WISE4 magnitudes are often not reported or used for any targets. This variable keeps track of the WISE4 mags in fits
 
-            toinumber = re.sub('TOI-', '', target_list[i])
             columns = ['bandname', 'magnitude', 'used_errors', 'catalog_errors']
-            sedtable = pd.read_csv(path + 'toi' + toinumber + '.sed', sep='\s+', skiprows=1, header=None, names=columns, comment='#')
+            sedtable = pd.read_csv(path + file_prefix[i] + '.sed', sep='\s+', skiprows=1, header=None, names=columns, comment='#', dtype=str)
             gaia_g = sedtable.magnitude[sedtable.bandname == 'Gaia_G_EDR3'].iloc[0]
             gaia_g_err = sedtable.used_errors[sedtable.bandname == 'Gaia_G_EDR3'].iloc[0]
             gaia_bp = sedtable.magnitude[sedtable.bandname == 'Gaia_BP_EDR3'].iloc[0]
@@ -486,7 +524,7 @@ def lit_table(target_list, path, outputpath='.', vsini_type='gaia', vsini_extern
             fout.write(r'\enddata' + '\n')
     
 
-def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.', bimodal=False):
+def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False):
     '''
     Generates a median table given the path to EXOFASTv2 output files.
 
@@ -494,7 +532,7 @@ def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.', bim
     -----------
     target_list: an array of strings containing the names of each target. Names should match those in EXOFASTv2 output files.
     path: path of EXOFASTv2 output files
-    file_prefix: prefix used in EXOFASTv2 file generation
+    file_prefix_list: list of prefixes used in EXOFASTv2 file generation
     outputpath: the folder in which the table should be generated. Current working directory by default
     '''
 
@@ -663,7 +701,7 @@ def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.', bim
     
     for ii in range(len(target_list)):
 
-        medians = grab_medians(target_list[ii], path, file_prefix=file_prefix, bimodal=bimodal)
+        medians = grab_medians(path = path, file_prefix=file_prefix_list[ii], bimodal=bimodal)
 
         if Mstar ==True: 
             make_median_string(medians,'mstar',mstars)
@@ -818,8 +856,9 @@ def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.', bim
     extinction_prior = ''
     dilution_prior = ''
     if bimodal == False:
+        dilute_bool = np.zeros_like(target_list) # to keep track of which targets were fit for dilution
         for ii in range(len(target_list)):
-            priortable = grab_priors(target_list[ii], path)
+            priortable = grab_priors(file_prefix_list[ii], path)
             parallax_prior_mean = priortable.meanvalue[priortable.variable == 'parallax'].iloc[0]
             parallax_prior_stdev = priortable.stdev[priortable.variable == 'parallax'].iloc[0]
             parallax_prior += (r'& $\mathcal{G}$[' + round_sig_figs(parallax_prior_mean, 5) + r', ' + round_sig_figs(parallax_prior_stdev, 5) + r'] ')
@@ -830,14 +869,18 @@ def med_table(target_list, path, file_prefix = '.MIST.SED.', outputpath='.', bim
             extinction_prior += (r'& $\mathcal{U}$[0, ' + round_sig_figs(extinction_prior_upperbound, 5) + r'] ')
 
             for x in priortable.variable: # finding the dilution term
-                match = re.findall('dilute_\d', x)
+                match = re.findall('dilute', x)
                 if len(match) > 0:
                     dilute_colname = (match[0])
-            dilution_prior_mean = priortable.meanvalue[priortable.variable == dilute_colname].iloc[0]
-            dilution_prior_stdev = priortable.stdev[priortable.variable == dilute_colname].iloc[0]
-            dilution_prior += (r'& $\mathcal{G}$[' + round_sig_figs(dilution_prior_mean, 5) + r', ' + remove_sci_notation(float(round_sig_figs(dilution_prior_stdev, 5))) + r'] ')
-            # above line should be cleaned up in a future version. Maybe make a new function that removes scientific notation and sets sig figs for all numbers
+                    dilution_prior_mean = priortable.meanvalue[priortable.variable == dilute_colname].iloc[0]
+                    dilution_prior_stdev = priortable.stdev[priortable.variable == dilute_colname].iloc[0]
 
+                    dilute_bool[ii] = 1
+            if dilute_bool[ii]:
+                dilution_prior += (r'& $\mathcal{G}$[' + round_sig_figs(dilution_prior_mean, 5) + r', ' + remove_sci_notation(float(round_sig_figs(dilution_prior_stdev, 5))) + r'] ')
+                # above line should be cleaned up in a future version. Maybe make a new function that removes scientific notation and sets sig figs for all numbers
+            else:
+                dilution_prior += (r'& --- ')
 
     # Generating the preamble
     
