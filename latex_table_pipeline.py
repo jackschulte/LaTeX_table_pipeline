@@ -637,7 +637,7 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     teffs=[r'$T_{\rm eff}$ & Effective temperature (K) ']
     teffseds=[r'$T_{\rm eff,SED}$ & Effective temperature (K) ']
     fehs=[r'$[{\rm Fe/H}]$ & Metallicity (dex) ']
-    initfehs=[r'$[{\rm Fe/H}]_{0}^\ddagger$ & Initial metallicity ']
+    initfehs=[r'$[{\rm Fe/H}]_{0}$ & Initial metallicity ']
     ages=[r'Age & Age (Gyr) ']
     eeps=[r'EEP & Equivalent evolutionary phase ']
     logmstars=[r'$\log{M_*}$ & Mass ($\log{\msun}$) ']
