@@ -78,9 +78,9 @@ def grab_priors(file_prefix, path):
     priors = pd.read_csv(path + file_prefix + '.priors.final', sep='\s+', skiprows=1, header=None, comment='#', names=columns)
 
     for i in range(len(priors)):
-        if type(priors.meanvalue[i]) == str:
-            if 'dilute' in priors.meanvalue[i]:
-                priors.drop(index=i, inplace=True) # drop instances where dilution priors are linked
+        # find linked parameters and replace them with the first instance of the parameter
+        if (priors.meanvalue[i] in priors.variable.values) or (priors.meanvalue[i].replace('_0', '') in priors.variable.values):
+            priors.meanvalue[i] = priors.meanvalue[priors.variable == priors.meanvalue[i].replace('_0', '')].iloc[0]
     priors['meanvalue'] = priors['meanvalue'].astype(float) # to ensure that all mean values are floats
     return priors
 
