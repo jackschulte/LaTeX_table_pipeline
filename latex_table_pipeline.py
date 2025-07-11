@@ -307,12 +307,20 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
 
             columns = ['bandname', 'magnitude', 'used_errors', 'catalog_errors']
             sedtable = pd.read_csv(path + file_prefix[i] + '.sed', sep='\s+', skiprows=1, header=None, names=columns, comment='#', dtype=str)
-            gaia_g = sedtable.magnitude[sedtable.bandname == 'Gaia'].iloc[0]
-            gaia_g_err = sedtable.used_errors[sedtable.bandname == 'Gaia'].iloc[0]
-            gaia_bp = sedtable.magnitude[sedtable.bandname == 'GaiaBP'].iloc[0]
-            gaia_bp_err = sedtable.used_errors[sedtable.bandname == 'GaiaBP'].iloc[0]
-            gaia_rp = sedtable.magnitude[sedtable.bandname == 'GaiaRP'].iloc[0]
-            gaia_rp_err = sedtable.used_errors[sedtable.bandname == 'GaiaRP'].iloc[0]
+            if sedtable.bandname.isin(['Gaia_G_EDR3']).any():
+                gaia_g = sedtable.magnitude[sedtable.bandname == 'Gaia_G_EDR3'].iloc[0]
+                gaia_g_err = sedtable.used_errors[sedtable.bandname == 'Gaia_G_EDR3'].iloc[0]
+                gaia_bp = sedtable.magnitude[sedtable.bandname == 'Gaia_BP_EDR3'].iloc[0]
+                gaia_bp_err = sedtable.used_errors[sedtable.bandname == 'Gaia_BP_EDR3'].iloc[0]
+                gaia_rp = sedtable.magnitude[sedtable.bandname == 'Gaia_RP_EDR3'].iloc[0]
+                gaia_rp_err = sedtable.used_errors[sedtable.bandname == 'Gaia_RP_EDR3'].iloc[0]
+            else:
+                gaia_g = sedtable.magnitude[sedtable.bandname == 'Gaia'].iloc[0]
+                gaia_g_err = sedtable.used_errors[sedtable.bandname == 'Gaia'].iloc[0]
+                gaia_bp = sedtable.magnitude[sedtable.bandname == 'GaiaBP'].iloc[0]
+                gaia_bp_err = sedtable.used_errors[sedtable.bandname == 'GaiaBP'].iloc[0]
+                gaia_rp = sedtable.magnitude[sedtable.bandname == 'GaiaRP'].iloc[0]
+                gaia_rp_err = sedtable.used_errors[sedtable.bandname == 'GaiaRP'].iloc[0]
 
             j_2mass = sedtable.magnitude[sedtable.bandname == 'J2M'].iloc[0]
             j_2mass_err = sedtable.used_errors[sedtable.bandname == 'J2M'].iloc[0]
@@ -418,7 +426,7 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
     
     for ii in range(len(target_list)):
         colstring+='c'
-        namestring += (' & \colhead{' + target_list[ii] + '}')
+        namestring += (' & ' + target_list[ii])
 
     if add_source_column == True:
         with open(f'{outputpath}/{newfile}', 'w') as fout: 
@@ -428,9 +436,9 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
         r'\providecommand{\teq}{\ensuremath{T_{\rm eq}}}'+'\n'+
         r'\providecommand{\ecosw}{\ensuremath{e\cos{\omega_*}}}'+'\n'+
         r'\providecommand{\esinw}{\ensuremath{e\sin{\omega_*}}}'+'\n'+
-        r'\providecommand{\msun}{\ensuremath{\,M_\Sun}}'+'\n'+
-        r'\providecommand{\rsun}{\ensuremath{\,R_\Sun}}'+'\n'+
-        r'\providecommand{\lsun}{\ensuremath{\,L_\Sun}}'+'\n'+
+        r'\providecommand\msun{M$_\odot$\xspace}'+'\n'+
+        r'\providecommand{\rsun}{R$_\odot$\xspace}'+'\n'+
+        r'\providecommand{\lsun}{L$_\odot$\xspace}'+'\n'+
         r'\providecommand{\mj}{\ensuremath{\,M_{\rm J}}}'+'\n'+
         r'\providecommand{\rj}{\ensuremath{\,R_{\rm J}}}'+'\n'+
         r'\providecommand{\me}{\ensuremath{\,M_{\rm E}}}'+'\n'+
@@ -438,16 +446,19 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
         r'\providecommand{\fave}{\langle F \rangle}'+'\n'+
         r'\providecommand{\fluxcgs}{10$^9$ erg s$^{-1}$ cm$^{-2}$}'+'\n'+
         r'\providecommand{\tess}{\textit{TESS}\xspace}'+'\n'+
-        r'\tablecolumns{' + str(len(target_list) + 3) + '}'+'\n'+
-        r'\tablehead{ & ' + namestring + r' & \colhead{Source}' + '}'+'\n'+
-        r'\startdata'+'\n'+
-        #r'\hline \\' + '\n' + 
-        #r'\hline \\' + '\n' + 
+        r'\begin{table*}'+'\n'+
+        r'\centering'+'\n'+
+        r'\caption{Measured Properties from Literature}'+'\n'+
+        r'\label{tab:lit}'+'\n'+
+        r'\resizebox{\textwidth}{!}{'+'\n'+
+        r'\begin{tabular}{l l' + colstring + '}'+'\n'+
+        r'\hline' + '\n' +
+        r'& ' + namestring + r' & Source \\' +'\n'+
         r'\multicolumn{' + str(len(target_list) + 3) + r'}{l}{\textbf{Other identifiers}:} \\' + '\n' +
         r'& \tess Input Catalog' + tic_id_str + r'\\' + '\n' +
-        r'& TYCHO-2' + tycho_id_str + r'\\'  + '\n' +
-        r'& 2MASS' + twomass_id_str + r'\\' + '\n' +
-        r'& Gaia DR3' + gaia_id_str + r'\\' + '\n' +
+        r'& TYCHO-2' + tycho_id_str + r' & \\'  + '\n' +
+        r'& 2MASS' + twomass_id_str + r' & \\' + '\n' +
+        r'& Gaia DR3' + gaia_id_str + r' & \\' + '\n' +
         r'\hline' + '\n' +               
         r'\multicolumn{' + str(len(target_list) + 3) + r'}{l}{\textbf{Astrometric Parameters}:} \\' + '\n' ) # subheading for astrometry
 
@@ -471,7 +482,18 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
             if wise4count > 0:
                 write(wise4_arr, fout)
 
-            fout.write(r'\enddata' + '\n')
+            fout.write(r'\hline' + '\n' +
+                       r'\end{tabular}' + '\n' +
+                       r'} % end resizebox' + '\n' + 
+                       r'\vspace{2mm}' + '\n' +
+                       r'\begin{minipage}{\textwidth}' + '\n' +
+                       r'\textbf{Notes:}' + '\n' +
+                       r'\footnotesize' + '\n' +
+                       r'The uncertainties of the photometric measurements have a systematic floor applied that is usually larger than the reported catalog errors.\\' + '\n' +
+                       r'$\ddagger$ Right Ascension and Declination are in epoch J2000. Coordinates are from Vizier where Gaia RA and Dec have been precessed and corrected from epoch J2016.\\' + '\n' +
+                       r'Sources: (1) \cite{GaiaDR3}; (2) \S\ref{subsubsec:tres} \& \S\ref{subsubsec:chiron}; (3) \cite{Stassun:2019}; (4) \cite{Cutri:2003, Skrutskie:2006}; (5) \cite{Wright:2010, Cutri:2012}' + '\n' +
+                       r'\end{minipage}' + '\n' +
+                       r'\end{table*}')
     else:
         with open(f'{outputpath}/{newfile}', 'w') as fout: 
             fout.write(r'\providecommand{\bjdtdb}{\ensuremath{\rm {BJD_{TDB}}}}'+'\n'+
@@ -480,9 +502,9 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
         r'\providecommand{\teq}{\ensuremath{T_{\rm eq}}}'+'\n'+
         r'\providecommand{\ecosw}{\ensuremath{e\cos{\omega_*}}}'+'\n'+
         r'\providecommand{\esinw}{\ensuremath{e\sin{\omega_*}}}'+'\n'+
-        r'\providecommand{\msun}{\ensuremath{\,M_\Sun}}'+'\n'+
-        r'\providecommand{\rsun}{\ensuremath{\,R_\Sun}}'+'\n'+
-        r'\providecommand{\lsun}{\ensuremath{\,L_\Sun}}'+'\n'+
+        r'\providecommand\msun{M$_\odot$\xspace}'+'\n'+
+        r'\providecommand{\rsun}{R$_\odot$\xspace}'+'\n'+
+        r'\providecommand{\lsun}{L$_\odot$\xspace}'+'\n'+
         r'\providecommand{\mj}{\ensuremath{\,M_{\rm J}}}'+'\n'+
         r'\providecommand{\rj}{\ensuremath{\,R_{\rm J}}}'+'\n'+
         r'\providecommand{\me}{\ensuremath{\,M_{\rm E}}}'+'\n'+
@@ -490,15 +512,18 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
         r'\providecommand{\fave}{\langle F \rangle}'+'\n'+
         r'\providecommand{\fluxcgs}{10$^9$ erg s$^{-1}$ cm$^{-2}$}'+'\n'+
         r'\providecommand{\tess}{\textit{TESS}\xspace}'+'\n'+
-        r'\tablecolumns{' + str(len(target_list) + 2) + '}'+'\n'+
-        r'\tablehead{ & ' + namestring + '}'+'\n'+
-        r'\startdata'+'\n'+
-        #r'\hline \\' + '\n' + 
-        #r'\hline \\' + '\n' + 
+        r'\begin{table*}'+'\n'+
+        r'\centering'+'\n'+
+        r'\caption{Measured Properties from Literature}'+'\n'+
+        r'\label{tab:lit}'+'\n'+
+        r'\resizebox{\textwidth}{!}{'+'\n'+
+        r'\begin{tabular}{l l' + colstring + '}'+'\n'+
+        r'\hline' + '\n' +
+        r'& ' + namestring + '}'+'\n'+
         r'\multicolumn{' + str(len(target_list) + 2) + r'}{l}{\textbf{Other identifiers}:} \\' + '\n' +
-        r'& \tess Input Catalog' + tic_id_str + r'\\' + '\n' +
-        r'& TYCHO-2' + tycho_id_str + r'\\'  + '\n' +
-        r'& 2MASS' + twomass_id_str + r'\\' + '\n' +
+        r'& \tess Input Catalog' + tic_id_str + r' & \\' + '\n' +
+        r'& TYCHO-2' + tycho_id_str + r' & \\'  + '\n' +
+        r'& 2MASS' + twomass_id_str + r' & \\' + '\n' +
         r'\hline' + '\n' +               
         r'\multicolumn{' + str(len(target_list) + 2) + r'}{l}{\textbf{Astrometric Parameters}:} \\' + '\n' )
 
@@ -521,7 +546,18 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
             write(wise3_arr, fout)
             write(wise4_arr, fout)
 
-            fout.write(r'\enddata' + '\n')
+            fout.write(r'\hline' + '\n' +
+                       r'\end{tabular}' + '\n' +
+                       r'} % end resizebox' + '\n' + 
+                       r'\vspace{2mm}' + '\n' +
+                       r'\begin{minipage}{\textwidth}' + '\n' +
+                       r'\textbf{Notes:}' + '\n' +
+                       r'\footnotesize' + '\n' +
+                       r'The uncertainties of the photometric measurements have a systematic floor applied that is usually larger than the reported catalog errors.\\' + '\n' +
+                       r'$\ddagger$ Right Ascension and Declination are in epoch J2000. Coordinates are from Vizier where Gaia RA and Dec have been precessed and corrected from epoch J2016.\\' + '\n' +
+                       r'Sources: (1) \cite{GaiaDR3}; (2) \S\ref{subsubsec:tres} \& \S\ref{subsubsec:chiron}; (3) \cite{Stassun:2019}; (4) \cite{Cutri:2003, Skrutskie:2006}; (5) \cite{Wright:2010, Cutri:2012}' + '\n' +
+                       r'\end{minipage}' + '\n' +
+                       r'\end{table*}')
     
 
 def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False):
