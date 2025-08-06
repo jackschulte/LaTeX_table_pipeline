@@ -79,8 +79,9 @@ def grab_priors(file_prefix, path):
 
     for i in range(len(priors)):
         # find linked parameters and replace them with the first instance of the parameter
-        if (priors.meanvalue[i] in priors.variable.values) or (priors.meanvalue[i].replace('_0', '') in priors.variable.values):
-            priors.meanvalue[i] = priors.meanvalue[priors.variable == priors.meanvalue[i].replace('_0', '')].iloc[0]
+        if type(priors.meanvalue[i]) == str:
+            if (priors.meanvalue[i] in priors.variable.values) or (priors.meanvalue[i].replace('_0', '') in priors.variable.values):
+                priors.meanvalue[i] = priors.meanvalue[priors.variable == priors.meanvalue[i].replace('_0', '')].iloc[0]
     priors['meanvalue'] = priors['meanvalue'].astype(float) # to ensure that all mean values are floats
     return priors
 
@@ -451,7 +452,7 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
         r'\caption{Measured Properties from Literature}'+'\n'+
         r'\label{tab:lit}'+'\n'+
         r'\resizebox{\textwidth}{!}{'+'\n'+
-        r'\begin{tabular}{l l' + colstring + '}'+'\n'+
+        r'\begin{tabular}{ll' + colstring + '}'+'\n'+
         r'\hline' + '\n' +
         r'& ' + namestring + r' & Source \\' +'\n'+
         r'\multicolumn{' + str(len(target_list) + 3) + r'}{l}{\textbf{Other identifiers}:} \\' + '\n' +
@@ -519,7 +520,7 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
         r'\resizebox{\textwidth}{!}{'+'\n'+
         r'\begin{tabular}{l l' + colstring + '}'+'\n'+
         r'\hline' + '\n' +
-        r'& ' + namestring + '}'+'\n'+
+        r'& ' + namestring + r'\\' +'\n'+
         r'\multicolumn{' + str(len(target_list) + 2) + r'}{l}{\textbf{Other identifiers}:} \\' + '\n' +
         r'& \tess Input Catalog' + tic_id_str + r' & \\' + '\n' +
         r'& TYCHO-2' + tycho_id_str + r' & \\'  + '\n' +
@@ -884,7 +885,7 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     
     for ii in range(len(target_list)):
         colstring+='c'
-        namestring += (' & \colhead{' + target_list[ii] + '}')
+        namestring += (' & ' + target_list[ii])
 
     # Collecting priors to put at the top of the table
     parallax_prior = '' # initializing strings
@@ -937,11 +938,15 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     r'\providecommand{\fave}{\langle F \rangle}'+'\n'+
     r'\providecommand{\fluxcgs}{10$^9$ erg s$^{-1}$ cm$^{-2}$}'+'\n'+
     r'\providecommand{\tess}{\textit{TESS}\xspace}'+'\n'+
-    r'\tablecolumns{' + str(len(target_list) + 2) + '}'+'\n'+
-    r'\tablehead{& ' + namestring + '}'+'\n'+
-    r'\startdata'+'\n'+
-    #r'\hline \\' + '\n' + 
-    #r'\hline \\' + '\n' + 
+    r'\begin{table*}'+'\n'+
+    r'\centering'+'\n'+
+    r'\caption{Median Values and 68\% Confidence Intervals for Fitted Stellar and Planetary Parameters}'+'\n'+
+    r'\label{tab:median}'+'\n'+
+    r'\scriptsize'+'\n'+
+    r'\begin{tabular}{ll' + colstring + '}'+'\n'+
+    r'\hline' + '\n' +
+    r'& ' + namestring + r'\\' +'\n'+
+    r'\hline' + '\n' +
     r'\multicolumn{' + str(len(target_list) + 2) + r'}{l}{\textbf{Priors}:} \\' + '\n' +
     r'$\pi$ & Gaia Parallax (mas)' + parallax_prior + r'\\' + '\n' +
     r'$[{\rm Fe/H}]$ & Metallicity (dex)' + metallicity_prior + r'\\' + '\n' +
@@ -1095,4 +1100,9 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
             write(psgs,fout)
         
         # conclude with \enddata at the bottom of the input .tex file
-        fout.write(r'\enddata' + '\n')
+        fout.write(r'\hline' + '\n' + 
+                   r'\end{tabular}' + '\n' +
+                   r'\begin{flushleft}' + '\n' +
+                   r'\textbf{Notes:} *TOI-4138\'s posterior is bimodal in stellar mass and age. This table presents the median values; see Table~\ref{tab:bimodal} for the split solutions.' + '\n' +
+                   r'\end{flushleft}' + '\n' +
+                   r'\end{table*}')
