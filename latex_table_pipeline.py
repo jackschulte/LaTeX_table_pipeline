@@ -260,7 +260,8 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
         for ticid in TIC_IDs:
             vsini, vsini_err = grab_tres_vsini(tres_username, tres_password, ticid)
             vsini_tres.append(round_sig_figs(vsini, 3))
-            vsini_tres_err.append(round_sig_figs(vsini_err, 2))
+            decimal_places = len(str(vsini).split('.')[1])
+            vsini_tres_err.append(round(vsini_err, decimal_places)) # round the vsini error to the same number of decimal places as the vsini
 
     # initializing rows
     ra_arr=[r'$\alpha_{J2000}\ddagger$ & Right Ascension (h:m:s) ']
@@ -431,20 +432,21 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
 
         gen_lit_str(ra_arr, ra_str)
         gen_lit_str(dec_arr, dec_str)
-        gen_lit_str(gaia_g_arr, gaia_g, gaia_g_err)
-        gen_lit_str(gaia_bp_arr, gaia_bp, gaia_bp_err)
-        gen_lit_str(gaia_rp_arr, gaia_rp, gaia_rp_err)
-        gen_lit_str(tmag_arr, TESS_mags[i], TESS_mags_err[i])
-        gen_lit_str(j_2mass_arr, j_2mass, j_2mass_err)
-        gen_lit_str(h_2mass_arr, h_2mass, h_2mass_err)
-        gen_lit_str(k_2mass_arr, k_2mass, k_2mass_err)
-        gen_lit_str(wise1_arr, wise1, wise1_err)
-        gen_lit_str(wise2_arr, wise2, wise2_err)
-        gen_lit_str(wise3_arr, wise3, wise3_err)
-        gen_lit_str(wise4_arr, wise4, wise4_err)
-        gen_lit_str(pmra_arr, pmra, pmra_err)
-        gen_lit_str(pmdec_arr, pmdec, pmdec_err)
-        gen_lit_str(parallax_arr, parallax, parallax_err)
+        gen_lit_str(gaia_g_arr, round(float(gaia_g), 3), round(float(gaia_g_err), 3))
+        gen_lit_str(gaia_bp_arr, round(float(gaia_bp), 3), round(float(gaia_bp_err), 3))
+        gen_lit_str(gaia_rp_arr, round(float(gaia_rp), 3), round(float(gaia_rp_err), 3))
+        gen_lit_str(tmag_arr, round(float(TESS_mags[i]), 4), round(float(TESS_mags_err[i]), 4))
+        gen_lit_str(j_2mass_arr, round(float(j_2mass), 3), round(float(j_2mass_err), 3))
+        gen_lit_str(h_2mass_arr, round(float(h_2mass), 3), round(float(h_2mass_err), 3))
+        gen_lit_str(k_2mass_arr, round(float(k_2mass), 3), round(float(k_2mass_err), 3))
+        gen_lit_str(wise1_arr, round(float(wise1), 3), round(float(wise1_err), 3))
+        gen_lit_str(wise2_arr, round(float(wise2), 3), round(float(wise2_err), 3))
+        gen_lit_str(wise3_arr, round(float(wise3), 3), round(float(wise3_err), 3))
+        if wise4count > 0:
+            gen_lit_str(wise4_arr, round(float(wise4), 3), round(float(wise4_err), 3))
+        gen_lit_str(pmra_arr, round(float(pmra), 3), round(float(pmra_err), 3))
+        gen_lit_str(pmdec_arr, round(float(pmdec), 3), round(float(pmdec_err), 3))
+        gen_lit_str(parallax_arr, round(float(parallax), 4), round(float(parallax_err), 4))
         if vsini_type == 'gaia':
             gen_lit_str(vsini_arr, vbroad, vbroad_err)
         elif vsini_type == 'tres':
@@ -1155,6 +1157,6 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
         fout.write(r'\hline' + '\n' + 
                    r'\end{tabular}' + '\n' +
                    r'\begin{flushleft}' + '\n' +
-                   r'\textbf{Notes:} *TOI-4138\'s posterior is bimodal in stellar mass and age. This table presents the median values; see Table~\ref{tab:bimodal} for the split solutions.' + '\n' +
+                   r'\textbf{Notes:} The priors for each system are labeled as $\mathcal{G}$[mean, standard deviation] if they are Gaussian priors and $\mathcal{U}$[lower limit, upper limit] if they are uniform priors.' + '\n' +
                    r'\end{flushleft}' + '\n' +
                    r'\end{table*}')
