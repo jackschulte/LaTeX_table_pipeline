@@ -8,10 +8,65 @@ from grab_tres_vsini import grab_tres_vsini
 import re
 
 def remove_sci_notation(x):
+    '''
+    Removes scientific notation from a number and returns it as a string.
+    
+    Parameters
+    -----------
+    x: the number to remove scientific notation from
+    '''
     return np.format_float_positional(x, trim='-')
 
 def round_sig_figs(x, num_sig_figs):
+    '''
+    Rounds a number to a specified number of significant figures.
+
+    Parameters
+    -----------
+    x: the number to round
+    num_sig_figs: the number of significant figures to round to
+    '''
     return '{:g}'.format(float('{:.{p}g}'.format(x, p=num_sig_figs)))
+
+def robust_decimal_errors(val, up_err, low_err):
+    '''
+    Ensures that the uncertainties have at least as many positions behind the decimal as the value itself.
+
+    Parameters
+    -----------
+    val: the value to round
+    up_err: the upper error on the value
+    low_err: the lower error on the value
+    '''
+    val_str = str(remove_sci_notation(val))
+    up_err_str = str(remove_sci_notation(up_err))
+    low_err_str = str(remove_sci_notation(low_err))
+
+    if '.' in val_str:
+        val_decimal_places = len(val_str.split('.')[1])
+    else:
+        val_decimal_places = 0
+
+    if '.' in low_err_str:
+        low_err_decimal_places = len(low_err_str.split('.')[1])
+    else:
+        low_err_decimal_places = 0
+
+    if '.' in up_err_str:
+        up_err_decimal_places = len(up_err_str.split('.')[1])
+    else:
+        up_err_decimal_places = 0
+
+    if low_err_decimal_places < up_err_decimal_places: # pad zeros to the lower error if it has fewer decimal places than the upper error
+        low_err_str = low_err_str + '0' * (up_err_decimal_places - low_err_decimal_places)
+    elif up_err_decimal_places < low_err_decimal_places:
+        up_err_str = up_err_str + '0' * (low_err_decimal_places - up_err_decimal_places)
+
+    if val_decimal_places == 1 and low_err_decimal_places == 0 and up_err_decimal_places == 0:
+        val = int(val) # to remove trailing zeros
+        val_str = str(val)
+
+    return val_str, up_err_str, low_err_str
 
 def grab_medians(path, file_prefix, bimodal=False):
     '''
@@ -62,7 +117,7 @@ def median_scinot_corrections(median, parname):
 
     lowerr = median.lower_error[median.parname==parname].iloc[0]
     lowerr_corrected = lowerr * 10**exponent
-    return param_corrected, uperr_corrected, lowerr_corrected
+    return robust_decimal_errors(param_corrected, uperr_corrected, lowerr_corrected)
 
 def grab_priors(file_prefix, path):
     '''
@@ -101,9 +156,6 @@ def make_median_string(medians, param, array):
     
         uperr = medians.upper_error[medians.parname == param].iloc[0]
         loerr = medians.lower_error[medians.parname == param].iloc[0]
-
-        uperr = remove_sci_notation(uperr)
-        loerr = remove_sci_notation(loerr)
 
         if uperr==loerr:
             errstring = r' \pm ' + str(uperr)
