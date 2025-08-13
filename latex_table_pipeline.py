@@ -259,8 +259,9 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
     if vsini_type == 'tres':
         for ticid in TIC_IDs:
             vsini, vsini_err = grab_tres_vsini(tres_username, tres_password, ticid)
-            vsini_tres.append(round_sig_figs(vsini, 3))
-            decimal_places = len(str(vsini).split('.')[1])
+            vsini_3sigfig = round_sig_figs(vsini, 3)
+            vsini_tres.append(vsini_3sigfig)
+            decimal_places = len(str(vsini_3sigfig).split('.')[1])
             vsini_tres_err.append(round(vsini_err, decimal_places)) # round the vsini error to the same number of decimal places as the vsini
 
     # initializing rows
