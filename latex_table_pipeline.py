@@ -56,11 +56,32 @@ def robust_decimal_errors(val, up_err, low_err):
         up_err_decimal_places = len(up_err_str.split('.')[1])
     else:
         up_err_decimal_places = 0
+    
+    if val_decimal_places > 0:
+        if low_err_decimal_places < val_decimal_places:
+            low_err_str = low_err_str + '0' * (val_decimal_places - low_err_decimal_places)
+        if up_err_decimal_places < val_decimal_places:
+            up_err_str = up_err_str + '0' * (val_decimal_places - up_err_decimal_places)
+    
+    if low_err_decimal_places > 0:
+        if low_err_decimal_places < up_err_decimal_places: # pad zeros to the lower error if it has fewer decimal places than the upper error
+            low_err_str = low_err_str + '0' * (up_err_decimal_places - low_err_decimal_places)
+    if up_err_decimal_places > 0:
+        if up_err_decimal_places < low_err_decimal_places:
+            up_err_str = up_err_str + '0' * (low_err_decimal_places - up_err_decimal_places)
 
-    if low_err_decimal_places < up_err_decimal_places: # pad zeros to the lower error if it has fewer decimal places than the upper error
-        low_err_str = low_err_str + '0' * (up_err_decimal_places - low_err_decimal_places)
-    elif up_err_decimal_places < low_err_decimal_places:
-        up_err_str = up_err_str + '0' * (low_err_decimal_places - up_err_decimal_places)
+    # Final check to remove trailing zeros and ensure same number of decimal places in errors
+    if '.' in low_err_str:
+        low_err_decimal_places = len(low_err_str.split('.')[1])
+    if '.' in up_err_str:
+        up_err_decimal_places = len(up_err_str.split('.')[1])
+    if low_err_decimal_places != up_err_decimal_places:
+        while (low_err_decimal_places > up_err_decimal_places) and (low_err_str[-1] == '0'):
+            low_err_str = low_err_str[:-1]
+            low_err_decimal_places -= 1
+        while (up_err_decimal_places > low_err_decimal_places) and (up_err_str[-1] == '0'):
+            up_err_str = up_err_str[:-1]
+            up_err_decimal_places -= 1
 
     if val_decimal_places == 1 and low_err_decimal_places == 0 and up_err_decimal_places == 0:
         val = int(val) # to remove trailing zeros
