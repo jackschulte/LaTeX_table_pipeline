@@ -59,15 +59,23 @@ def robust_decimal_errors(val, up_err, low_err):
     
     if val_decimal_places > 0:
         if low_err_decimal_places < val_decimal_places:
+            if '.' not in low_err_str:
+                low_err_str += '.'
             low_err_str = low_err_str + '0' * (val_decimal_places - low_err_decimal_places)
         if up_err_decimal_places < val_decimal_places:
+            if '.' not in up_err_str:
+                up_err_str += '.'
             up_err_str = up_err_str + '0' * (val_decimal_places - up_err_decimal_places)
     
     if low_err_decimal_places > 0:
         if low_err_decimal_places < up_err_decimal_places: # pad zeros to the lower error if it has fewer decimal places than the upper error
+            if '.' not in low_err_str:
+                low_err_str += '.'
             low_err_str = low_err_str + '0' * (up_err_decimal_places - low_err_decimal_places)
     if up_err_decimal_places > 0:
         if up_err_decimal_places < low_err_decimal_places:
+            if '.' not in up_err_str:
+                up_err_str += '.'
             up_err_str = up_err_str + '0' * (low_err_decimal_places - up_err_decimal_places)
 
     # Final check to remove trailing zeros and ensure same number of decimal places in errors
@@ -109,6 +117,7 @@ def grab_medians(path, file_prefix, bimodal=False):
     medians_corrected = medians.copy()
     for i in range(len(medians_corrected)):
         median_corrections = median_scinot_corrections(medians, medians_corrected.parname[i])
+        median_corrections = [float(x) for x in median_corrections]
         medians_corrected.loc[i, 'median_value'] = median_corrections[0]
         medians_corrected.loc[i, 'upper_error'] = median_corrections[1]
         medians_corrected.loc[i, 'lower_error'] = median_corrections[2]
@@ -151,13 +160,13 @@ def grab_priors(file_prefix, path):
     '''
 
     columns = ['variable', 'meanvalue', 'stdev', 'low_bound', 'up_bound', 'starting_value'] # these column names only make sense for gaussian column names
-    priors = pd.read_csv(path + file_prefix + '.priors.final', sep='\s+', skiprows=1, header=None, comment='#', names=columns)
+    priors = pd.read_csv(path + file_prefix + '.priors.final', sep=r'\s+', skiprows=1, header=None, comment='#', names=columns)
 
     for i in range(len(priors)):
         # find linked parameters and replace them with the first instance of the parameter
         if type(priors.meanvalue[i]) == str:
             if (priors.meanvalue[i] in priors.variable.values) or (priors.meanvalue[i].replace('_0', '') in priors.variable.values):
-                priors.meanvalue[i] = priors.meanvalue[priors.variable == priors.meanvalue[i].replace('_0', '')].iloc[0]
+                priors.loc[i, 'meanvalue'] = priors.meanvalue[priors.variable == priors.meanvalue[i].replace('_0', '')].iloc[0]
     priors['meanvalue'] = priors['meanvalue'].astype(float) # to ensure that all mean values are floats
     return priors
 
@@ -382,7 +391,7 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
             wise4count = 0 # WISE4 magnitudes are often not reported or used for any targets. This variable keeps track of the WISE4 mags in fits
 
             columns = ['bandname', 'magnitude', 'used_errors', 'catalog_errors']
-            sedtable = pd.read_csv(path + file_prefix[i] + '.sed', sep='\s+', skiprows=1, header=None, names=columns, comment='#', dtype=str)
+            sedtable = pd.read_csv(path + file_prefix[i] + '.sed', sep=r'\s+', skiprows=1, header=None, names=columns, comment='#', dtype=str)
             if sedtable.bandname.isin(['Gaia_G_EDR3']).any():
                 gaia_g = sedtable.magnitude[sedtable.bandname == 'Gaia_G_EDR3'].iloc[0]
                 gaia_g_err = sedtable.used_errors[sedtable.bandname == 'Gaia_G_EDR3'].iloc[0]
