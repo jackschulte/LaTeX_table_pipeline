@@ -6,6 +6,8 @@ from astroquery.vizier import Vizier
 from astropy.coordinates import Angle
 from grab_tres_vsini import grab_tres_vsini
 import re
+import ast
+from urllib.request import urlopen
 
 def remove_sci_notation(x):
     '''
@@ -646,7 +648,7 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
                        r'\end{table*}')
     
 
-def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False):
+def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False, multistar=False):
     '''
     Generates a median table given the path to EXOFASTv2 output files.
 
@@ -759,7 +761,7 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     teffs=[r'$T_{\rm eff}$ & Effective temperature (K) ']
     teffseds=[r'$T_{\rm eff,SED}$ & Effective temperature (K) ']
     fehs=[r'$[{\rm Fe/H}]$ & Metallicity (dex) ']
-    initfehs=[r'$[{\rm Fe/H}]_{0}$ & Initial metallicity ']
+    initfehs=[r'$[{\rm Fe/H}]_{0}$ & Initial metallicity (dex) ']
     ages=[r'Age & Age (Gyr) ']
     eeps=[r'EEP & Equivalent evolutionary phase ']
     logmstars=[r'$\log{M_*}$ & Mass ($\log{\msun}$) ']
@@ -1191,3 +1193,284 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
                    r'\textbf{Notes:} The priors for each system are labeled as $\mathcal{G}$[mean, standard deviation] if they are Gaussian priors and $\mathcal{U}$[lower limit, upper limit] if they are uniform priors.' + '\n' +
                    r'\end{flushleft}' + '\n' +
                    r'\end{table*}')
+
+def _extract_grid_rows(html, heading_text):
+    """Extract the JavaScript row-data array for the grid beneath a named section heading.
+
+    Parameters
+    ----------
+    html : str
+        The full HTML page content.
+    heading_text : str
+        The visible heading text to locate, such as "Time Series Observations".
+
+    Returns
+    -------
+    list[dict]
+        A list of row dictionaries parsed from the embedded JavaScript array.
+    """
+    heading_match = re.search(
+        r'<div[^>]*class=["\']grid_header["\'][^>]*>\s*' + re.escape(heading_text) + r'\b',
+        html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if not heading_match:
+        raise RuntimeError(f"Could not find section: {heading_text}")
+
+    # Search only the content that appears after the matching heading.
+    after_heading = html[heading_match.end():]
+    row_match = re.search(
+        r'var\s+(rowData\d+)\s*=\s*(\[[\s\S]*?\]);\s*//\s*Grid options',
+        after_heading,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if not row_match:
+        raise RuntimeError(f"Could not find row data after section: {heading_text}")
+
+    # Convert the JavaScript literals to Python literals before parsing.
+    data = (
+        row_match.group(2)
+        .replace("true", "True")
+        .replace("false", "False")
+        .replace("null", "None")
+    )
+
+    return ast.literal_eval(data)
+
+
+def get_followup_table(tic_id):
+    """Fetch the follow-up observations for a given TIC ID and return a cleaned DataFrame.
+
+    Parameters
+    ----------
+    tic_id : str
+        TESS Input Catalog identifier, with or without the leading "TIC " prefix.
+
+    Returns
+    -------
+    pandas.DataFrame
+        A cleaned table with telescope, date, camera, filter, and size metadata.
+    """
+    if tic_id.startswith('TIC '):
+        tic_id = tic_id.replace('TIC ', '')
+    url = "https://exofop.ipac.caltech.edu/tess/target.php?id=" + tic_id
+    with urlopen(url, timeout=20) as response:
+        html = response.read().decode('utf-8', 'ignore')
+
+    rows = _extract_grid_rows(html, 'Time Series Observations')
+
+    df = pd.DataFrame(rows)
+    df_short = df[['tstel', 'tsdate', 'tscam', 'tsfilt', 'tspix', 'tspsf', 'tspar']].copy()
+    df_short.columns = ['Telescope', 'Date', 'Camera', 'Filter', r'Pix. Scale ($\arcsec$/pix)', r'PSF FWHM ($\arcsec$)', r'Aper. Rad. ($\arcsec$)']
+
+    # Extract telescope size (m) and remove it from the Telescope column.
+    df_short['Tel. Size (m)'] = df_short['Telescope'].str.extract(r'\((\d*\.?\d*)\s*m\)', expand=False).astype(float)
+    df_short['Telescope'] = df_short['Telescope'].str.replace(r'\s*\(\d*\.?\d*\s*m\)', '', regex=True).str.strip()
+
+    df_short = df_short.sort_values(by='Date', ascending=True).reset_index(drop=True)
+    df_short = df_short[['Telescope', 'Tel. Size (m)', 'Date', 'Camera', 
+                         'Filter', r'Pix. Scale ($\arcsec$/pix)', r'PSF FWHM ($\arcsec$)', r'Aper. Rad. ($\arcsec$)']]
+
+    # reformat date to Year Mon Day format
+    df_short['Date'] = pd.to_datetime(df_short['Date'], format='%Y-%m-%d')
+    df_short['Date'] = df_short['Date'].dt.strftime('%Y %b %d')
+    
+    for filter in df_short['Filter']:
+        if filter is not None:
+            # Escape special LaTeX characters in the filter names
+            escaped_filter = filter.replace('#', r'\#').replace('_', r'\_')
+            df_short.loc[df_short['Filter'] == filter, 'Filter'] = escaped_filter
+    
+    # Truncate trailing zeros and convert floats to strings for LaTeX formatting
+    float_columns = ['Tel. Size (m)', r'Pix. Scale ($\arcsec$/pix)', r'PSF FWHM ($\arcsec$)', r'Aper. Rad. ($\arcsec$)']
+    for col in float_columns:
+        df_short[col] = df_short[col].apply(lambda x: ('{:.3f}'.format(x)).rstrip('0').rstrip('.') if pd.notnull(x) else x)
+
+    # Replace NaNs with '---'
+    df_short = df_short.fillna('---')
+
+    return df_short
+
+
+def generate_master_followup_table(tic_list, toi_list):
+    """Build a combined follow-up table for many TIC/TOI pairs.
+
+    Parameters
+    ----------
+    tic_list : list[str]
+        TIC identifiers, with or without the "TIC " prefix.
+    toi_list : list[str]
+        TOI identifiers, with or without the "TOI-" prefix.
+
+    Returns
+    -------
+    pandas.DataFrame
+        A concatenated table with TIC and TOI columns added to each row group.
+    """
+    master_df = pd.DataFrame()
+
+    for tic_id, toi_id in zip(tic_list, toi_list):
+        if not tic_id.startswith('TIC '):
+            tic_id = 'TIC ' + tic_id
+
+        if toi_id.startswith('TOI-'):
+            toi_id = toi_id.replace('TOI-', '')
+        try:
+            df = get_followup_table(tic_id)
+        except Exception as e:
+            print(f"Error occurred while fetching follow-up table for TOI-{toi_id}: {e}")
+            continue
+
+        # Add TIC and TOI ids to the first row for this target.
+        df['TIC ID'] = tic_id.replace('TIC ', '')
+        df.loc[1:, 'TIC ID'] = ''
+        df['TOI Number'] = toi_id
+        df.loc[1:, 'TOI Number'] = ''
+
+        master_df = pd.concat([master_df, df], ignore_index=True)
+        master_df = master_df[['TIC ID', 'TOI Number', 'Telescope', 'Tel. Size (m)', 'Date', 'Camera',
+                                'Filter', r'Pix. Scale ($\arcsec$/pix)', r'PSF FWHM ($\arcsec$)', r'Aper. Rad. ($\arcsec$)']]
+    return master_df
+
+def convert_table_to_latex_and_save(df, filename):
+    """Convert a DataFrame to LaTeX format and save it to a file.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        The DataFrame to convert.
+    filename : str
+        The name of the file to save the LaTeX output.
+    """
+    latex_str = df.to_latex(index=False, escape=False, caption='Summary of Follow-up Observations', label='tab:followup', longtable=True)
+
+    # required for longtable to work in a two-column document
+    latex_str = '\\onecolumn\n' + latex_str + '\n\\twocolumn'
+    
+    with open(filename, 'w') as f:
+        f.write(latex_str)
+
+def generate_followup_table(tic_list, toi_list, output_filename):
+    """Generate the follow-up table and save it as a LaTeX file.
+
+    Parameters
+    ----------
+    tic_list : list[str]
+        List of TIC identifiers.
+    toi_list : list[str]
+        List of TOI identifiers.
+    output_filename : str
+        The filename for the output LaTeX file.
+    """
+    master_df = generate_master_followup_table(tic_list, toi_list)
+    convert_table_to_latex_and_save(master_df, output_filename)
+
+def get_hri_table(tic_id):
+    """Fetch the high-resolution imaging observations for a given TIC ID and return a cleaned DataFrame.
+
+    Parameters
+    ----------
+    tic_id : str
+        TESS Input Catalog identifier, with or without the leading "TIC " prefix.
+
+    Returns
+    -------
+    pandas.DataFrame
+        A cleaned table with telescope, date, camera, filter, and size metadata.
+    """
+    if tic_id.startswith('TIC '):
+        tic_id = tic_id.replace('TIC ', '')
+    url = "https://exofop.ipac.caltech.edu/tess/target.php?id=" + tic_id
+    with urlopen(url, timeout=20) as response:
+        html = response.read().decode('utf-8', 'ignore')
+
+    rows = _extract_grid_rows(html, 'Imaging Observations')
+
+    df = pd.DataFrame(rows)
+    df_short = df[['itel', 'idate', 'iinst', 'itype', 'ifilt', 'ipix', 'ipsf', 'icont']].copy()
+    df_short.columns = ['Telescope', 'Date', 'Instrument', 'Imaging Type', 'Filter', r'Pix. Scale ($\arcsec$/pix)', r'PSF FWHM ($\arcsec$)', 'Contrast']
+
+    df_short = df_short.sort_values(by='Date', ascending=True).reset_index(drop=True)
+
+    for contrast in df_short['Contrast']:
+        if contrast is not None:
+            # Replace 'delta' with the LaTeX delta symbol
+            new_contrast = contrast.replace('delta', r'$\Delta$')
+            df_short.loc[df_short['Contrast'] == contrast, 'Contrast'] = new_contrast
+
+    for filter in df_short['Filter']:
+        if filter is not None:
+            # Escape special LaTeX characters in the filter names
+            escaped_filter = filter.replace('#', r'\#').replace('_', r'\_')
+            df_short.loc[df_short['Filter'] == filter, 'Filter'] = escaped_filter
+
+    # reformat date to Year Mon Day format
+    df_short['Date'] = pd.to_datetime(df_short['Date'], format='%Y-%m-%d')
+    df_short['Date'] = df_short['Date'].dt.strftime('%Y %b %d')
+
+    # Truncate trailing zeros and convert floats to strings for LaTeX formatting
+    float_columns = [r'Pix. Scale ($\arcsec$/pix)', r'PSF FWHM ($\arcsec$)']
+    for col in float_columns:
+        df_short[col] = df_short[col].apply(lambda x: ('{:.3f}'.format(x)).rstrip('0').rstrip('.') if pd.notnull(x) else x)
+
+    # Replace NaNs and empty strings with '---'
+    df_short = df_short.fillna('---')
+    df_short = df_short.replace('', '---')
+
+    return df_short
+
+
+def generate_master_table(tic_list, toi_list):
+    """Build a combined HRI table for many TIC/TOI pairs.
+
+    Parameters
+    ----------
+    tic_list : list[str]
+        TIC identifiers, with or without the "TIC " prefix.
+    toi_list : list[str]
+        TOI identifiers, with or without the "TOI-" prefix.
+
+    Returns
+    -------
+    pandas.DataFrame
+        A concatenated table with TIC and TOI columns added to each row group.
+    """
+    master_df = pd.DataFrame()
+
+    for tic_id, toi_id in zip(tic_list, toi_list):
+        if not tic_id.startswith('TIC '):
+            tic_id = 'TIC ' + tic_id
+
+        if toi_id.startswith('TOI-'):
+            toi_id = toi_id.replace('TOI-', '')
+        try:
+            df = get_hri_table(tic_id)
+        except Exception as e:
+            print(f"Error occurred while fetching HRI table for TOI-{toi_id}: {e}")
+            continue
+
+        # Add TIC and TOI ids to the first row for this target.
+        df['TIC ID'] = tic_id.replace('TIC ', '')
+        df.loc[1:, 'TIC ID'] = ''
+        df['TOI Number'] = toi_id
+        df.loc[1:, 'TOI Number'] = ''
+
+        master_df = pd.concat([master_df, df], ignore_index=True)
+        master_df = master_df[['TIC ID', 'TOI Number', 'Telescope', 'Date', 'Instrument', 'Imaging Type', 'Filter', 
+                               r'Pix. Scale ($\arcsec$/pix)', r'PSF FWHM ($\arcsec$)', 'Contrast']]
+    return master_df
+
+def generate_hri_table(tic_list, toi_list, output_filename):
+    """Generate the HRI table and save it as a LaTeX file.
+
+    Parameters
+    ----------
+    tic_list : list[str]
+        List of TIC identifiers.
+    toi_list : list[str]
+        List of TOI identifiers.
+    output_filename : str
+        The filename for the output LaTeX file.
+    """
+    master_df = generate_master_table(tic_list, toi_list)
+    convert_table_to_latex_and_save(master_df, output_filename)
