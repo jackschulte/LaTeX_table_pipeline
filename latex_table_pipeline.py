@@ -648,7 +648,7 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
                        r'\end{table*}')
     
 
-def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False, multistar=False):
+def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False, multistar=False, parameters=None):
     '''
     Generates a median table given the path to EXOFASTv2 output files.
 
@@ -658,99 +658,23 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     path: path of EXOFASTv2 output files
     file_prefix_list: list of prefixes used in EXOFASTv2 file generation
     outputpath: the folder in which the table should be generated. Current working directory by default
+    parameters: optional list of parameter names to include in the table. Defaults to the set of parameters
+        used in Schulte+ 2025
     '''
 
-    # set which parameters to output to the .tex file
+    def _normalize_param_name(name):
+        return re.sub(r'[^a-z0-9]', '', str(name).lower())
 
-    # Stellar parameters
-    Mstar=True
-    Rstar=True
-    RstarSED=False
-    Lstar=True
-    fbol=False
-    rhostar=True
-    logg=True
-    teff=True
-    teffsed=False
-    feh=True
-    initfeh=True
-    age=True
-    eep=True
-    logmstar=False
-    Av=True
-    errscale=False
-    parallax=False # the GAIA parralax is already in the literature table
-    distance=True
-
-    # Planetary parameters
-    period=True
-    rp=True
-    mp=True
-    mpsun=False #nor sure what the problem is with this
-    tc=True
-    tt=False
-    t0=True
-    semimajor=True
-    ideg=True
-    ecc=True
-    omegadeg=True
-    teq=True
-    tcirc=True
-    k=True
-    p=True
-    ar=True
-    delta=False
-    depthTESS=True
-    tau=True
-    t14=True
-    tfwhm=False
-    b=True
-    cosi=False #nor sure what the problem is with this
-    bs=True
-    taus=False
-    ts=False # maybe include this and ts14?
-    ts14=False
-    tfwhms=False
-    depth25=False
-    depth50=False
-    depth75=False
-    rhop=True
-    #logp=True
-    loggp=True
-    safronov=False
-    fave=False
-    tp=False
-    ta=False
-    td=False
-    vcve=False
-    ecosw=False
-    esinw=False
-    #secosw=True
-    #sesinw=True
-    msini=False
-    q=True
-    dr=True
-    pt=False
-    ptg=False
-    ps=False
-    psg=False
-
-    # Setting up to save the table as a .tex file
-
-    if os.path.exists(outputpath) == False:
-        os.mkdir(outputpath)
-
-    newfile = 'median_table.tex'
-
-    # if this file exists, come up with a new name
-    i = 2
-    while os.path.exists(f'{outputpath}/{newfile}'):
-        newfile = 'median_table_' + str(i) + '.tex'
-        i += 1
-    print(f'Saving this table as {newfile}...')
+    default_parameters = [
+        'mstar', 'rstar', 'lstar', 'rhostar', 'logg', 'teff', 'feh', 'initfeh', 'age', 'eep', 'Av',
+        'distance', 'Period', 'rp', 'mp', 'tc', 't0', 'a', 'ideg', 'e', 'omegadeg', 'teq', 'tcirc',
+        'k', 'p', 'ar', 'depth_TESS', 'tau', 't14', 'b', 'bs', 'rhop', 'loggp', 'q', 'dr'
+    ]
+    if parameters is None:
+        parameters = default_parameters
+    selected_parameters = {_normalize_param_name(param) for param in parameters}
 
     # Initializing strings with LaTeX for each parameter
-    
     mstars=[r'$M_*$ & Mass (\msun) ']
     rstars=[r'$R_*$ & Radius (\rsun) ']
     rstarseds=[r'$R_{*,SED}$ & Radius$ (\rsun) ']
@@ -769,7 +693,7 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     errscales=[r'$\sigma_{SED}$ & SED photometry error scaling ']
     plaxes=[r'$\varpi$ & Parallax (mas) ']
     dists=[r'$d$ & Distance (pc) ']
-    
+
     periods=[r'$P$ & Period (days) ']
     rps=[r'$R_{\rm P}$ & Radius (\rj) ']
     mps=[r'$M_{\rm P}$ & Mass (\mj) ']
@@ -801,7 +725,6 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     depth50s=[r'$\delta_{S,5.0\mu m}$ & Blackbody eclipse depth at 5.0$\mu$m (ppm) ']
     depth75s=[r'$\delta_{S,7.5\mu m}$ & Blackbody eclipse depth at 7.5$\mu$m (ppm) ']
     rhops=[r'$\rho_{\rm P}$ & Density (cgs) ']
-    #logps=[r'']
     loggps=[r'$\log{g_{\rm P}}$ & Surface gravity (cgs) ']
     safronovs=[r'$\Theta$ & Safronov number ']
     faves=[r'$\fave$ & Incident flux (\fluxcgs) ']
@@ -812,8 +735,6 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     vcves=[r'$V_c/V_e$ ']
     ecosws=[r'$e\cos{\omega_*}$ & ']
     esinws=[r'$e\sin{\omega_*}$ & ']
-    #secosws=[r'']
-    #sesinws=[r'']
     msinis=[r'$M_{\rm P}\sin{i}$ & Minimum mass (\mj) ']
     qs=[r'$M_{\rm P}/M_*$ & Mass ratio  ']
     drs=[r'$d/R_*$ & Separation at mid-transit  ']
@@ -821,151 +742,101 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     ptgs=[r'$P_{\rm T,G}$ & A priori transit prob  ']
     pss=[r'$P_{\rm S}$ & A priori non-grazing eclipse prob ']
     psgs=[r'$P_{\rm S,G}$ & A priori eclipse prob  ']
-    
-    
+
+    stellar_parameter_specs = [
+        ('mstar', 'mstar', mstars),
+        ('rstar', 'rstar', rstars),
+        ('rstarsed', 'rstarsed', rstarseds),
+        ('lstar', 'lstar', lstars),
+        ('fbol', 'fbol', fbols),
+        ('rhostar', 'rhostar', rhostars),
+        ('logg', 'logg', loggs),
+        ('teff', 'teff', teffs),
+        ('teffsed', 'teffsed', teffseds),
+        ('feh', 'feh', fehs),
+        ('initfeh', 'initfeh', initfehs),
+        ('age', 'age', ages),
+        ('eep', 'eep', eeps),
+        ('logmstar', 'logmstar', logmstars),
+        ('Av', 'Av', avs),
+        ('errscale', 'errscale', errscales),
+        ('parallax', 'parallax', plaxes),
+        ('distance', 'distance', dists),
+    ]
+
+    planetary_parameter_specs = [
+        ('Period', 'Period', periods),
+        ('rp', 'rp', rps),
+        ('mp', 'mp', mps),
+        ('mpsun', 'mpsun', mpsuns),
+        ('tc', 'tc', tcs),
+        ('tt', 'tt', tts),
+        ('t0', 't0', t0s),
+        ('a', 'a', semimajors),
+        ('ideg', 'ideg', idegs),
+        ('e', 'e', eccs),
+        ('omegadeg', 'omegadeg', odegs),
+        ('teq', 'teq', teqs),
+        ('tcirc', 'tcirc', tcircs),
+        ('k', 'k', ks),
+        ('p', 'p', ps),
+        ('ar', 'ar', ars),
+        ('delta', 'delta', deltas),
+        ('depth_TESS', 'depth_TESS', Tdepths),
+        ('tau', 'tau', taus),
+        ('t14', 't14', t14s),
+        ('tfwhm', 'tfwhm', tfwhms),
+        ('b', 'b', bs),
+        ('cosi', 'cosi', cosis),
+        ('bs', 'bs', bss),
+        ('taus', 'taus', tauss),
+        ('t14s', 't14s', ts14s),
+        ('tfwhms', 'tfwhms', tfwhmss),
+        ('eclipsedepth25', 'eclipsedepth25', depth25s),
+        ('eclipsedepth50', 'eclipsedepth50', depth50s),
+        ('eclipsedepth75', 'eclipsedepth75', depth75s),
+        ('rhop', 'rhop', rhops),
+        ('loggp', 'loggp', loggps),
+        ('safronov', 'safronov', safronovs),
+        ('fave', 'fave', faves),
+        ('tp', 'tp', tps),
+        ('ts', 'ts', tss),
+        ('ta', 'ta', tas),
+        ('td', 'td', tds),
+        ('vcve', 'vcve', vcves),
+        ('ecosw', 'ecosw', ecosws),
+        ('esinw', 'esinw', esinws),
+        ('msini', 'msini', msinis),
+        ('q', 'q', qs),
+        ('dr', 'dr', drs),
+        ('pt', 'pt', pts),
+        ('ptg', 'ptg', ptgs),
+        ('ps', 'ps', pss),
+        ('psg', 'psg', psgs),
+    ]
+
+    parameter_specs = stellar_parameter_specs + planetary_parameter_specs
+
+    # Setting up to save the table as a .tex file
+
+    if os.path.exists(outputpath) == False:
+        os.mkdir(outputpath)
+
+    newfile = 'median_table.tex'
+
+    # if this file exists, come up with a new name
+    i = 2
+    while os.path.exists(f'{outputpath}/{newfile}'):
+        newfile = 'median_table_' + str(i) + '.tex'
+        i += 1
+    print(f'Saving this table as {newfile}...')
+
     for ii in range(len(target_list)):
+        medians = grab_medians(path=path, file_prefix=file_prefix_list[ii], bimodal=bimodal)
 
-        medians = grab_medians(path = path, file_prefix=file_prefix_list[ii], bimodal=bimodal)
-
-        if Mstar ==True: 
-            make_median_string(medians,'mstar',mstars)
-        if Rstar == True:
-            make_median_string(medians,'rstar',rstars)
-        if RstarSED==True:
-            make_median_string(medians,'rstarsed',rstarseds)
-        if Lstar == True:
-            make_median_string(medians,'lstar',lstars)
-        if fbol == True:
-            make_median_string(medians,'fbol',fbols)
-        if rhostar == True:
-            make_median_string(medians,'rhostar',rhostars)
-        if logg == True:
-            make_median_string(medians,'logg',loggs)
-        if teff == True:
-            make_median_string(medians,'teff',teffs)
-        if teffsed == True:
-            make_median_string(medians,'teffsed',teffseds)
-        if feh == True:
-            make_median_string(medians,'feh',fehs)
-        if initfeh == True:
-            make_median_string(medians,'initfeh',initfehs)
-        if age == True:
-            make_median_string(medians,'age',ages)
-        if eep == True:
-            make_median_string(medians,'eep',eeps)
-        if logmstar == True:
-            make_median_string(medians,'logmstar',logmstars)
-        if Av == True:
-            make_median_string(medians,'Av',avs)
-        if errscale == True:
-            make_median_string(medians,'errscale',errscales)
-        if parallax==True:
-            make_median_string(medians,'parallax',plaxes)
-        if distance==True:
-            make_median_string(medians,'distance',dists)
-            
-        if period == True:
-            make_median_string(medians,'Period',periods)
-        if rp == True:
-            make_median_string(medians,'rp',rps)
-        if mp==True:
-            make_median_string(medians,'mp',mps)
-        if mpsun == True:
-            make_median_string(medians,'mpsun',mpsuns)
-        if tc == True:
-            make_median_string(medians,'tc',tcs)
-        if tt == True:
-            make_median_string(medians,'tt',tts)
-        if t0 == True:
-            make_median_string(medians,'t0',t0s)
-        if semimajor == True:
-            make_median_string(medians,'a',semimajors)
-        if ideg == True:
-            make_median_string(medians,'ideg',idegs)
-        if ecc == True:
-            make_median_string(medians,'e',eccs)
-        if omegadeg == True:
-            make_median_string(medians,'omegadeg',odegs)
-        if teq==True:
-            make_median_string(medians,'teq',teqs)
-        if tcirc == True:
-            make_median_string(medians,'tcirc',tcircs)
-        if k == True:
-            make_median_string(medians,'k',ks)
-        if p == True:
-            make_median_string(medians,'p',ps)
-        if ar==True:
-            make_median_string(medians,'ar',ars)          
-        if delta ==True:
-            make_median_string(medians,'delta',deltas)
-        if depthTESS==True:
-            make_median_string(medians,'depth_TESS',Tdepths)
-        if tau==True:
-            make_median_string(medians,'tau',taus)
-        if t14==True:
-            make_median_string(medians,'t14',t14s)
-        if tfwhm==True:
-            make_median_string(medians,'tfwhm',tfwhms)
-        if b==True:
-            make_median_string(medians,'b',bs)
-        if cosi==True:
-            make_median_string(medians,'cosi',cosis)
-        if bs==True:
-            make_median_string(medians,'bs',bss)
-        if taus==True:
-            make_median_string(medians,'taus',tauss)
-        if ts14==True:
-            make_median_string(medians,'t14s',ts14s)
-        if tfwhms==True:
-            make_median_string(medians,'tfwhms',tfwhmss)
-        if depth25==True:
-            make_median_string(medians,'eclipsedepth25',depth25s)
-        if depth50==True:
-            make_median_string(medians,'eclipsedepth50',depth50s)
-        if depth75==True:
-            make_median_string(medians,'eclipsedepth75',depth75s)   
-        if rhop==True:
-            make_median_string(medians,'rhop',rhops)
-        #if logp==True:
-        #    make_median_string(medians,'logp',logps)
-        if loggp==True:
-            make_median_string(medians,'loggp',loggps)
-        if safronov==True:
-            make_median_string(medians,'safronov',safronovs)
-        if fave==True:
-            make_median_string(medians,'fave',faves)        
-        if tp==True:
-            make_median_string(medians,'tp',tps)
-        if ts==True:
-            make_median_string(medians,'ts',tss)
-        if ta==True:
-            make_median_string(medians,'ta',tas)
-        if td==True:
-            make_median_string(medians,'td',tds)
-        if vcve==True:
-            make_median_string(medians,'vcve',vcves)
-        if ecosw==True:
-            make_median_string(medians,'ecosw',ecosws)
-        if esinw==True:
-            make_median_string(medians,'esinw',esinws)
-        #if secosw==True:
-        #    make_median_string(medians,'secosw',secosws)
-        #if sesinw==True:
-        #    make_median_string(medians,'sesinw',sesinws)
-        if msini==True:
-            make_median_string(medians,'msini',msinis)
-        if q==True:
-            make_median_string(medians,'q',qs)
-        if dr==True:
-            make_median_string(medians,'dr',drs)
-        if pt==True:
-            make_median_string(medians,'pt',pts)
-        if ptg==True:
-            make_median_string(medians,'ptg',ptgs)
-        if ps==True:
-            make_median_string(medians,'ps',pss)
-        if psg==True:
-            make_median_string(medians,'psg',psgs)
+        for param_name, median_key, labels in parameter_specs:
+            if _normalize_param_name(param_name) in selected_parameters or _normalize_param_name(median_key) in selected_parameters:
+                make_median_string(medians, median_key, labels)
 
     colstring = 'lc'
     namestring = ''
@@ -1044,147 +915,14 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     #r'\smallskip\\\multicolumn{2}{l}{Stellar Parameters:}&\smallskip\\'+'\n')
 
             
-        if Mstar ==True:
-            write(mstars,fout)
-        if Rstar==True:
-            write(rstars,fout)
-        if RstarSED==True:
-            write(rstarseds,fout)
-        if Lstar == True:
-            write(lstars,fout)
-        if fbol == True:
-            write(fbols,fout)
-        if rhostar == True:
-            write(rhostars,fout)
-        if logg == True:
-            write(loggs,fout)
-        if teff == True:
-            write(teffs,fout)
-        if teffsed == True:
-            write(teffseds,fout)
-        if feh == True:
-            write(fehs,fout)
-        if initfeh == True:
-            write(initfehs,fout)
-        if age == True:
-            write(ages,fout)
-        if eep == True:
-            write(eeps,fout)
-        if logmstar == True:
-            write(logmstars,fout)
-        if Av == True:
-            write(avs,fout)
-        if errscale == True:
-            write(errscales,fout)
-        if parallax==True:
-            write(plaxes,fout)
-        if distance==True:
-            write(dists,fout)
-        
-        #fout.write(r'\smallskip\\\multicolumn{2}{l}{Planetary Parameters:}&b\smallskip\\' + '\n')
+        for param_name, median_key, labels in stellar_parameter_specs:
+            if _normalize_param_name(param_name) in selected_parameters:
+                write(labels, fout)
+
         fout.write(r'\multicolumn{' + str(len(target_list) + 2) + r'}{l}{\textbf{Planetary Parameters}:} \\' + '\n')
-        if period == True:
-            write(periods,fout)
-        if rp==True:
-            write(rps,fout)
-        if mp==True:
-            write(mps,fout)
-        if mpsun == True:
-            write(mpsuns,fout)
-        if tc == True:
-            write(tcs,fout)
-        if tt == True:
-            write(tts,fout)
-        if t0 == True:
-            write(t0s,fout)
-        if semimajor == True:
-            write(semimajors,fout)
-        if ideg == True:
-            write(idegs,fout)
-        if ecc == True:
-            write(eccs,fout)
-        if omegadeg == True:
-            write(odegs,fout)
-        if teq==True:
-            write(teqs,fout)
-        if tcirc == True:
-            write(tcircs,fout)
-        if k == True:
-            write(ks,fout)
-        if p == True:
-            write(ps,fout)
-        if ar==True:
-            write(ars,fout)
-        if delta ==True:
-            write(deltas,fout)
-        if depthTESS==True:
-            write(Tdepths,fout)
-        if tau==True:
-            write(taus,fout)
-        if t14==True:
-            write(t14s,fout)
-        if tfwhm==True:
-            write(tfwhms,fout)            
-        if b==True:
-            write(bs,fout)
-        if cosi==True:
-            write(cosis,fout)
-        if bs==True:
-            write(bss,fout)
-        if taus==True:
-            write(tauss,fout)
-        if tfwhms==True:
-            write(tfwhmss,fout)
-        if depth25==True:
-            write(depth25s,fout)
-        if depth50==True:
-            write(depth50s,fout)
-        if depth75==True:
-            write(depth75s,fout)
-        if rhop==True:
-            write(rhops,fout)
-        #if logp==True:
-        #    make_median_string(medians,'logp',logps)
-        if loggp==True:
-            write(loggps,fout)
-        if safronov==True:
-            write(safronovs,fout)
-        if fave==True:
-            write(faves,fout)
-        if tp==True:
-            write(tps,fout)
-        if ts==True:
-            write(tss,fout)
-        if ts14==True:
-            write(ts14s,fout)               
-        if ta==True:
-            write(tas,fout)
-        if td==True:
-            write(tds,fout)
-        if vcve==True:
-            write(vcves,fout)
-        if ecosw==True:
-            write(ecosws,fout)
-        if esinw==True:
-            write(esinws,fout)
-        #if secosw==True:
-        #    make_median_string(medians,'secosw',secosws)
-        #if sesinw==True:
-        #    make_median_string(medians,'sesinw',sesinws)
-        if msini==True:
-            write(msinis,fout)
-        if q==True:
-            write(qs,fout)
-        if dr==True:
-            write(drs,fout)
-        if pt==True:
-            write(pts,fout)
-        if ptg==True:
-            write(ptgs,fout)
-        if ps==True:
-            write(pss,fout)
-        if psg==True:
-            write(psgs,fout)
+        for param_name, median_key, labels in planetary_parameter_specs:
+            if _normalize_param_name(param_name) in selected_parameters:
+                write(labels, fout)
         
         # conclude with \enddata at the bottom of the input .tex file
         fout.write(r'\hline' + '\n' + 
