@@ -99,6 +99,46 @@ def robust_decimal_errors(val, up_err, low_err):
 
     return val_str, up_err_str, low_err_str
 
+def format_value_with_errors(val, up_err, low_err):
+    '''
+    Format a value and its asymmetric uncertainties so:
+    - scientific notation is removed
+    - the uncertainties have the same number of decimal places as the value
+
+    Parameters
+    -----------
+    val: the value to format
+    up_err: the upper uncertainty on the value
+    low_err: the lower uncertainty on the value
+    '''
+    try:
+        val_f = float(val)
+    except Exception:
+        return '---', None, None
+
+    if not np.isfinite(val_f):
+        return '---', None, None
+
+    # try to coerce errors to floats; if they are not finite, treat as missing
+    try:
+        up_f = float(up_err)
+    except Exception:
+        up_f = np.nan
+    try:
+        low_f = float(low_err)
+    except Exception:
+        low_f = np.nan
+
+    if (not np.isfinite(up_f)) or (not np.isfinite(low_f)):
+        # No reliable errors: just return the value without sci notation
+        val_str = remove_sci_notation(val_f)
+        return val_str, None, None
+
+    # Use robust_decimal_errors to line up decimal places and remove sci notation
+    val_str, up_str, low_str = robust_decimal_errors(val_f, up_f, low_f)
+
+    return val_str, up_str, low_str
+
 def grab_medians(path, file_prefix, bimodal=False):
     '''
     Collects median values from EXOFASTv2 output files at the defined path.
@@ -185,16 +225,27 @@ def make_median_string(medians, param, array):
     param = param+'_0'
 
     if medians.parname.isin([param]).any() == True:
-    
+        val = medians.median_value[medians.parname == param].iloc[0]
         uperr = medians.upper_error[medians.parname == param].iloc[0]
         loerr = medians.lower_error[medians.parname == param].iloc[0]
 
-        if uperr==loerr:
-            errstring = r' \pm ' + str(uperr)
+        val_str, up_str, low_str = format_value_with_errors(val, uperr, loerr)
+
+        if val_str == '---':
+            array.append('& ---')
+            return
+
+        if (up_str is None) or (low_str is None):
+            # no reliable errors
+            array.append('& $' + val_str + '$ ')
+            return
+
+        if float(uperr) == float(loerr):
+            errstring = r' \pm ' + up_str
         else:
-            errstring = r'^{+'+ str(uperr) + '}_{-' + str(loerr) + '}'
-        array.append('& $' + str(medians.median_value[medians.parname == param].iloc[0]))
-        #if ii<len(paths)-1:
+            errstring = r'^{+' + up_str + '}_{-' + low_str + '}'
+
+        array.append('& $' + val_str)
         array.append(errstring + '$ ')
     else:
         array.append('& ---')
@@ -668,8 +719,9 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     default_parameters = [
         'mstar', 'rstar', 'lstar', 'rhostar', 'logg', 'teff', 'feh', 'initfeh', 'age', 'eep', 'Av',
         'distance', 'Period', 'rp', 'mp', 'tc', 't0', 'a', 'ideg', 'e', 'omegadeg', 'teq', 'tcirc',
-        'k', 'p', 'ar', 'depth_TESS', 'tau', 't14', 'b', 'bs', 'rhop', 'loggp', 'q', 'dr'
+        'k', 'p', 'ar', 'depth_TESS', 'tau', 't14', 'b', 'rhop', 'loggp', 'q', 'dr'
     ]
+
     if parameters is None:
         parameters = default_parameters
     selected_parameters = {_normalize_param_name(param) for param in parameters}
