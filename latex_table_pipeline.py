@@ -8,6 +8,7 @@ from grab_tres_vsini import grab_tres_vsini
 import re
 import ast
 from urllib.request import urlopen
+import warnings
 
 def remove_sci_notation(x):
     '''
@@ -285,12 +286,12 @@ def write(param_arr,file):
         file.write(ii)
     file.write(r'\\'+'\n')
 
-def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='gaia', vsini_external=None, tres_username=None, tres_password=None, 
-              add_source_column=False, grab_mags_from_sedfile=True):
+def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='gaia', vsini_external=None, tres_username=None, tres_password=None,
+              add_source_column=False, grab_mags_from_sedfile=True, max_targets_per_table=5):
     '''
     Generates a 'literature' table, using photometric and astrometric parameters from Gaia, 2MASS, and WISE. Optionally
     grabs vsini measurements from TRES. WARNING: Collecting TRES vsini measurements will increase runtime by ~4 min.
-    
+
     Parameters
     -----------
     target_list: an array of strings containing the names of each target. Nominally, these should be TOI IDs. Ex: ['TOI-1855', 'TOI-2107']
@@ -303,21 +304,16 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
     tres_passworde: String including the user's TRES website password if vsini_type='tres'
     add_source_column: a boolean to determine whether a source column is added.
     grab_mags_from_sedfile: a boolean to determine whether the magnitudes are collected from an EXOFAST SED file instead of astroquery
+    max_targets_per_table: the maximum number of targets shown in a single table. If len(target_list) exceeds this value, the
+        targets are split across multiple lit_table.tex files. Every table after the first is captioned "\\textit{(Continued)}"
+        and every table except the last gets "\\addtocounter{table}{-1}" so that all pieces share one table number. The
+        \\begin{minipage} notes block is only written in the last table. Set to None (or 0) to force a single table.
     '''
 
     # Setting up to save the table as a .tex file
 
     if os.path.exists(outputpath) == False:
         os.mkdir(outputpath)
-
-    newfile = 'lit_table.tex'
-
-    # if this file exists, come up with a new name
-    i = 2
-    while os.path.exists(f'{outputpath}/{newfile}'):
-        newfile = 'lit_table_' + str(i) + '.tex'
-        i += 1
-    print(f'Saving this table as {newfile}...')
 
     # Turning TOIs into TIC IDs
 
@@ -327,13 +323,20 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
     TESS_mags = [] # TESS mags are in exofop, not Vizier
     TESS_mags_err = []
     for toi in target_list:
-        toi_id = float(toi[4:]) + 0.01
-        TIC_ID = TOI_df.loc[toi_id]['TIC ID']
-        TESS_mag = TOI_df.loc[toi_id]['TESS Mag']
-        TESS_mag_err = TOI_df.loc[toi_id]['TESS Mag err']
-        TIC_IDs.append(TIC_ID)
-        TESS_mags.append(TESS_mag)
-        TESS_mags_err.append(TESS_mag_err)
+        if ('B' or 'C') in toi[-1]:
+            ticid_A = TOI_df.loc[toi_id]['TIC ID']
+            # Query the TIC v8.2 for the TIC identifier of the nearest sources
+            tic_columns = ['_r', 'TIC']
+            vtic = Vizier(columns=tic_columns, catalog='IV/39/tic82')
+            data_tic = vtic.query_region('TIC ' + str(ticid_A), radius=Angle(6, "arcsec"))
+        else:
+            toi_id = float(toi[4:]) + 0.01
+            TIC_ID = TOI_df.loc[toi_id]['TIC ID']
+            TESS_mag = TOI_df.loc[toi_id]['TESS Mag']
+            TESS_mag_err = TOI_df.loc[toi_id]['TESS Mag err']
+            TIC_IDs.append(TIC_ID)
+            TESS_mags.append(TESS_mag)
+            TESS_mags_err.append(TESS_mag_err)
     
     # grabbing vsini from the TRES/CHIRON site
 
@@ -342,10 +345,18 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
     if vsini_type == 'tres':
         for ticid in TIC_IDs:
             vsini, vsini_err = grab_tres_vsini(tres_username, tres_password, ticid)
-            vsini_3sigfig = round_sig_figs(vsini, 3)
-            vsini_tres.append(vsini_3sigfig)
-            decimal_places = len(str(vsini_3sigfig).split('.')[1])
-            vsini_tres_err.append(round(vsini_err, decimal_places)) # round the vsini error to the same number of decimal places as the vsini
+            if vsini and not np.isnan(vsini):
+                vsini_3sigfig = round_sig_figs(vsini, 3)
+                vsini_tres.append(vsini_3sigfig)
+                if '.' in str(vsini_3sigfig):
+                    decimal_places = len(str(vsini_3sigfig).split('.')[1])
+                else:
+                    decimal_places = 0
+                vsini_tres_err.append(round(vsini_err, decimal_places)) # round the vsini error to the same number of decimal places as the vsini
+                
+            else:
+                vsini_tres.append(None)
+                vsini_tres_err.append(None)
 
     # initializing rows
     ra_arr=[r'$\alpha_{J2000}\ddagger$ & Right Ascension (h:m:s) ']
@@ -371,50 +382,62 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
     vsini_arr=[r'$v\sin{i_\star}$ & Projected rotational velocity (km s$^{-1}$) ']
     # add note that vbroad includes other effects such as macroturbulence, template mismatch, and other instrumental effects
 
-    # initializing additional identifier arrays
-    tic_id_str=''
-    tycho_id_str=''
-    twomass_id_str=''
-    gaia_id_str=''
+    # initializing additional identifier arrays (one ' & ...' entry per target so they can be sliced per table)
+    tic_id_list=[]
+    tycho_id_list=[]
+    twomass_id_list=[]
+    gaia_id_list=[]
 
     # query for data and build rows
     for i in range(len(TIC_IDs)):
         # querying for data
-        gaia_columns=['RAJ2000', 'DEJ2000', 'Gmag', 'e_Gmag', 'BPmag', 'e_BPmag', 'RPmag', 'e_RPmag', 'pmRA', \
+        gaia_columns=['_r', 'RAJ2000', 'DEJ2000', 'Gmag', 'e_Gmag', 'BPmag', 'e_BPmag', 'RPmag', 'e_RPmag', 'pmRA', \
             'e_pmRA', 'pmDE', 'e_pmDE', 'Plx', 'e_Plx', 'Vbroad', 'e_Vbroad', 'TYC2', '2MASS', 'DR3Name']
         vgaia = Vizier(columns=gaia_columns, catalog='I/355/gaiadr3')
-        data_gaia = vgaia.query_region('TIC ' + str(TIC_IDs[i]), radius=Angle(0.001, "deg"))
+        data_gaia = vgaia.query_region('TIC ' + str(TIC_IDs[i]), radius=Angle(6, "arcsec"))
+        data_gaia = data_gaia[0] # Vizier returns a list of tables, but we only want the first one
+        data_gaia.sort('_r') # sort by distance from the target star
+        if len(data_gaia) > 1:
+            warnings.warn(f'Multiple sources in Vizier Gaia query of TIC {TIC_IDs[i]}. Selecting closest source.')
+        data_gaia = data_gaia[0]
 
-        twomass_columns=['Jmag', 'e_Jmag', 'Hmag', 'e_Hmag', 'Kmag', 'e_Kmag']
+        twomass_columns=['_r', 'Jmag', 'e_Jmag', 'Hmag', 'e_Hmag', 'Kmag', 'e_Kmag']
         v2mass = Vizier(columns=twomass_columns, catalog='II/246/out')
-        data_2MASS = v2mass.query_region('TIC ' + str(TIC_IDs[i]), radius=Angle(0.001, "deg"))
-
-        WISE_columns=['W1mag', 'e_W1mag', 'W2mag', 'e_W2mag', 'W3mag', 'e_W3mag', 'W4mag', 'e_W4mag']
-        vwise = Vizier(columns=WISE_columns, catalog='II/311/wise')
-        data_WISE = vwise.query_region('TIC ' + str(TIC_IDs[i]), radius=Angle(0.001, "deg"))
+        data_2MASS = v2mass.query_region('TIC ' + str(TIC_IDs[i]), radius=Angle(6, "arcsec"))
+        data_2MASS = data_2MASS[0] # Vizier returns a list of tables, but we only want the first one
+        data_2MASS.sort('_r') # sort by distance from the target star
+        if len(data_2MASS) > 1:
+            warnings.warn(f'Multiple sources in Vizier 2MASS query of TIC {TIC_IDs[i]}. Selecting closest source.')
+        data_2MASS = data_2MASS[0]
         
-        assert len(data_gaia) == 1, f'Multiple Vizier query results for {TIC_IDs[i]}'
-        assert len(data_2MASS) == 1, f'Multiple Vizier query results for {TIC_IDs[i]}'
-        assert len(data_WISE) == 1, f'Multiple Vizier query results for {TIC_IDs[i]}'
+
+        WISE_columns=['_r', 'W1mag', 'e_W1mag', 'W2mag', 'e_W2mag', 'W3mag', 'e_W3mag', 'W4mag', 'e_W4mag']
+        vwise = Vizier(columns=WISE_columns, catalog='II/311/wise')
+        data_WISE = vwise.query_region('TIC ' + str(TIC_IDs[i]), radius=Angle(6, "arcsec"))
+        data_WISE = data_WISE[0] # Vizier returns a list of tables, but we only want the first one
+        data_WISE.sort('_r') # sort by distance from the target star
+        if len(data_WISE) > 1:
+            warnings.warn(f'Multiple sources in Vizier WISE query of TIC {TIC_IDs[i]}. Selecting closest source.')
+        data_WISE = data_WISE[0]
 
         # store other identifiers
-        tic_id_str += (' & TIC ' + str(TIC_IDs[i]))
-        tycho_id = data_gaia[0]['TYC2'][0]
+        tic_id_list.append(' & TIC ' + str(TIC_IDs[i]))
+        tycho_id = str(data_gaia['TYC2'])
         if len(tycho_id) > 0:
-            tycho_id_str += (' & TYC ' + tycho_id)
+            tycho_id_list.append(' & TYC ' + tycho_id)
         else:
-            tycho_id_str += ' & ---'
-        twomass_id = data_gaia[0]['_2MASS'][0]
+            tycho_id_list.append(' & ---')
+        twomass_id = str(data_gaia['2MASS'])
         if len(twomass_id) > 0:
-            twomass_id_str += (' & J' + twomass_id)
+            twomass_id_list.append(' & J' + twomass_id)
         else:
-            twomass_id_str += ' & ---'
-        gaia_id = data_gaia[0]['DR3Name'][0]
+            twomass_id_list.append(' & ---')
+        gaia_id = str(data_gaia['DR3Name'])
         gaia_id = re.sub('Gaia DR3 ', '', gaia_id) # removing prefix
-        gaia_id_str += (f' & {gaia_id}')
+        gaia_id_list.append(f' & {gaia_id}')
 
         # Grabbing and formatting RA/Dec
-        ra = data_gaia[0]['RAJ2000'][0]
+        ra = data_gaia['RAJ2000']
         ra_angle = Angle(ra, 'deg')
         ra_hr = int(ra_angle.hms[0])
         if ra_hr < 10: # filling with zeroes to match hh:mm:ss format
@@ -426,7 +449,7 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
         if ra_sec < 10:
             ra_sec = f'0{ra_sec}'
         ra_str = f'{ra_hr}:{ra_min}:{ra_sec}'
-        dec = data_gaia[0]['DEJ2000'][0]
+        dec = data_gaia['DEJ2000']
         dec_angle = Angle(dec, 'deg')
         dec_deg = int(dec_angle.dms[0])
         if abs(dec_deg) < 10:
@@ -443,7 +466,7 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
         if grab_mags_from_sedfile == True:
             wise4count = 0 # WISE4 magnitudes are often not reported or used for any targets. This variable keeps track of the WISE4 mags in fits
 
-            columns = ['bandname', 'magnitude', 'used_errors', 'catalog_errors']
+            columns = ['bandname', 'magnitude', 'used_errors', 'catalog_errors', 'star_index']
             sedtable = pd.read_csv(path + file_prefix[i] + '.sed', sep=r'\s+', skiprows=1, header=None, names=columns, comment='#', dtype=str)
             if sedtable.bandname.isin(['Gaia_G_EDR3']).any():
                 gaia_g = sedtable.magnitude[sedtable.bandname == 'Gaia_G_EDR3'].iloc[0]
@@ -481,38 +504,38 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
                 wise4 = None
                 wise4_err = None
         else:
-            gaia_g = data_gaia[0]['Gmag'][0]
-            gaia_g_err = data_gaia[0]['e_Gmag'][0]
-            gaia_bp = data_gaia[0]['BPmag'][0]
-            gaia_bp_err = data_gaia[0]['e_BPmag'][0]
-            gaia_rp = data_gaia[0]['RPmag'][0]
-            gaia_rp_err = data_gaia[0]['e_RPmag'][0]
+            gaia_g = data_gaia['Gmag']
+            gaia_g_err = data_gaia['e_Gmag']
+            gaia_bp = data_gaia['BPmag']
+            gaia_bp_err = data_gaia['e_BPmag']
+            gaia_rp = data_gaia['RPmag']
+            gaia_rp_err = data_gaia['e_RPmag']
 
-            j_2mass = data_2MASS[0]['Jmag'][0]
-            j_2mass_err = data_2MASS[0]['e_Jmag'][0]
-            h_2mass = data_2MASS[0]['Hmag'][0]
-            h_2mass_err = data_2MASS[0]['e_Hmag'][0]
-            k_2mass = data_2MASS[0]['Kmag'][0]
-            k_2mass_err = data_2MASS[0]['e_Kmag'][0]
+            j_2mass = data_2MASS['Jmag']
+            j_2mass_err = data_2MASS['e_Jmag']
+            h_2mass = data_2MASS['Hmag']
+            h_2mass_err = data_2MASS['e_Hmag']
+            k_2mass = data_2MASS['Kmag']
+            k_2mass_err = data_2MASS['e_Kmag']
 
-            wise1 = data_WISE[0]['W1mag'][0]
-            wise1_err = data_WISE[0]['e_W1mag'][0]
-            wise2 = data_WISE[0]['W2mag'][0]
-            wise2_err = data_WISE[0]['e_W2mag'][0]
-            wise3 = data_WISE[0]['W3mag'][0]
-            wise3_err = data_WISE[0]['e_W3mag'][0]
-            wise4 = data_WISE[0]['W4mag'][0]
-            wise4_err = data_WISE[0]['e_W4mag'][0]
+            wise1 = data_WISE['W1mag']
+            wise1_err = data_WISE['e_W1mag']
+            wise2 = data_WISE['W2mag']
+            wise2_err = data_WISE['e_W2mag']
+            wise3 = data_WISE['W3mag']
+            wise3_err = data_WISE['e_W3mag']
+            wise4 = data_WISE['W4mag']
+            wise4_err = data_WISE['e_W4mag']
 
         # grabbing astrometric parameters
-        pmra = data_gaia[0]['pmRA'][0]
-        pmra_err = data_gaia[0]['e_pmRA'][0]
-        pmdec = data_gaia[0]['pmDE'][0]
-        pmdec_err = data_gaia[0]['e_pmDE'][0]
-        parallax = data_gaia[0]['Plx'][0]
-        parallax_err = data_gaia[0]['e_Plx'][0]
-        vbroad = data_gaia[0]['Vbroad'][0]
-        vbroad_err = data_gaia[0]['e_Vbroad'][0]
+        pmra = data_gaia['pmRA']
+        pmra_err = data_gaia['e_pmRA']
+        pmdec = data_gaia['pmDE']
+        pmdec_err = data_gaia['e_pmDE']
+        parallax = data_gaia['Plx']
+        parallax_err = data_gaia['e_Plx']
+        vbroad = data_gaia['Vbroad']
+        vbroad_err = data_gaia['e_Vbroad']
 
         gen_lit_str(ra_arr, ra_str)
         gen_lit_str(dec_arr, dec_str)
@@ -560,16 +583,8 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
             add_source(wise4_arr, 5)
 
     # Generating the preamble
-    colstring = 'lc'
-    namestring = ''
-    
-    for ii in range(len(target_list)):
-        colstring+='c'
-        namestring += (' & ' + target_list[ii])
 
-    if add_source_column == True:
-        with open(f'{outputpath}/{newfile}', 'w') as fout: 
-            fout.write(r'\providecommand{\bjdtdb}{\ensuremath{\rm {BJD_{TDB}}}}'+'\n'+
+    preamble = (r'\providecommand{\bjdtdb}{\ensuremath{\rm {BJD_{TDB}}}}'+'\n'+
         r'\providecommand{\feh}{\ensuremath{\left[{\rm Fe}/{\rm H}\right]}}'+'\n'+
         r'\providecommand{\teff}{\ensuremath{T_{\rm eff}}}'+'\n'+
         r'\providecommand{\teq}{\ensuremath{T_{\rm eq}}}'+'\n'+
@@ -584,120 +599,131 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
         r'\providecommand{\re}{\ensuremath{\,R_{\rm E}}}'+'\n'+
         r'\providecommand{\fave}{\langle F \rangle}'+'\n'+
         r'\providecommand{\fluxcgs}{10$^9$ erg s$^{-1}$ cm$^{-2}$}'+'\n'+
-        r'\providecommand{\tess}{\textit{TESS}\xspace}'+'\n'+
-        r'\begin{table*}'+'\n'+
-        r'\centering'+'\n'+
-        r'\caption{Measured Properties from Literature}'+'\n'+
-        r'\label{tab:lit}'+'\n'+
-        r'\resizebox{\textwidth}{!}{'+'\n'+
-        r'\begin{tabular}{ll' + colstring + '}'+'\n'+
-        r'\hline' + '\n' +
-        r'& ' + namestring + r' & Source \\' +'\n'+
-        r'\multicolumn{' + str(len(target_list) + 3) + r'}{l}{\textbf{Other identifiers}:} \\' + '\n' +
-        r'& \tess Input Catalog' + tic_id_str + r'\\' + '\n' +
-        r'& TYCHO-2' + tycho_id_str + r' & \\'  + '\n' +
-        r'& 2MASS' + twomass_id_str + r' & \\' + '\n' +
-        r'& Gaia DR3' + gaia_id_str + r' & \\' + '\n' +
-        r'\hline' + '\n' +               
-        r'\multicolumn{' + str(len(target_list) + 3) + r'}{l}{\textbf{Astrometric Parameters}:} \\' + '\n' ) # subheading for astrometry
+        r'\providecommand{\tess}{\textit{TESS}\xspace}'+'\n')
 
-            write(ra_arr, fout)
-            write(dec_arr, fout)
-            write(pmra_arr, fout)
-            write(pmdec_arr, fout)
-            write(parallax_arr, fout)
-            write(vsini_arr, fout)
-            fout.write(r'\multicolumn{' + str(len(TIC_IDs) + 3) + r'}{l}{\textbf{Photometric Parameters}:} \\' + '\n') # subheading for photometry
-            write(gaia_g_arr, fout)
-            write(gaia_bp_arr, fout)
-            write(gaia_rp_arr, fout)
-            write(tmag_arr, fout)
-            write(j_2mass_arr, fout)
-            write(h_2mass_arr, fout)
-            write(k_2mass_arr, fout)
-            write(wise1_arr, fout)
-            write(wise2_arr, fout)
-            write(wise3_arr, fout)
-            if wise4count > 0:
-                write(wise4_arr, fout)
+    notes = (r'\vspace{2mm}' + '\n' +
+             r'\begin{minipage}{\textwidth}' + '\n' +
+             r'\textbf{Notes:}' + '\n' +
+             r'\footnotesize' + '\n' +
+             r'The uncertainties of the photometric measurements have a systematic floor applied that is usually larger than the reported catalog errors.\\' + '\n' +
+             r'$\ddagger$ Right Ascension and Declination are in epoch J2000. Coordinates are from Vizier where Gaia RA and Dec have been precessed and corrected from epoch J2016.\\' + '\n' +
+             r'Sources: (1) \cite{GaiaDR3}; (2) \S\ref{subsubsec:tres} \& \S\ref{subsubsec:chiron}; (3) \cite{Stassun:2019}; (4) \cite{Cutri:2003, Skrutskie:2006}; (5) \cite{Wright:2010, Cutri:2012}' + '\n' +
+             r'\end{minipage}' + '\n')
 
-            fout.write(r'\hline' + '\n' +
-                       r'\end{tabular}' + '\n' +
-                       r'} % end resizebox' + '\n' + 
-                       r'\vspace{2mm}' + '\n' +
-                       r'\begin{minipage}{\textwidth}' + '\n' +
-                       r'\textbf{Notes:}' + '\n' +
-                       r'\footnotesize' + '\n' +
-                       r'The uncertainties of the photometric measurements have a systematic floor applied that is usually larger than the reported catalog errors.\\' + '\n' +
-                       r'$\ddagger$ Right Ascension and Declination are in epoch J2000. Coordinates are from Vizier where Gaia RA and Dec have been precessed and corrected from epoch J2016.\\' + '\n' +
-                       r'Sources: (1) \cite{GaiaDR3}; (2) \S\ref{subsubsec:tres} \& \S\ref{subsubsec:chiron}; (3) \cite{Stassun:2019}; (4) \cite{Cutri:2003, Skrutskie:2006}; (5) \cite{Wright:2010, Cutri:2012}' + '\n' +
-                       r'\end{minipage}' + '\n' +
-                       r'\end{table*}')
+    # Number of targets that actually made it into the rows
+    n_targets = len(TIC_IDs)
+
+    # Deciding how to split the targets across tables
+    if not max_targets_per_table or max_targets_per_table >= n_targets:
+        chunk_size = n_targets
     else:
-        with open(f'{outputpath}/{newfile}', 'w') as fout: 
-            fout.write(r'\providecommand{\bjdtdb}{\ensuremath{\rm {BJD_{TDB}}}}'+'\n'+
-        r'\providecommand{\feh}{\ensuremath{\left[{\rm Fe}/{\rm H}\right]}}'+'\n'+
-        r'\providecommand{\teff}{\ensuremath{T_{\rm eff}}}'+'\n'+
-        r'\providecommand{\teq}{\ensuremath{T_{\rm eq}}}'+'\n'+
-        r'\providecommand{\ecosw}{\ensuremath{e\cos{\omega_*}}}'+'\n'+
-        r'\providecommand{\esinw}{\ensuremath{e\sin{\omega_*}}}'+'\n'+
-        r'\providecommand\msun{M$_\odot$\xspace}'+'\n'+
-        r'\providecommand{\rsun}{R$_\odot$\xspace}'+'\n'+
-        r'\providecommand{\lsun}{L$_\odot$\xspace}'+'\n'+
-        r'\providecommand{\mj}{\ensuremath{\,M_{\rm J}}}'+'\n'+
-        r'\providecommand{\rj}{\ensuremath{\,R_{\rm J}}}'+'\n'+
-        r'\providecommand{\me}{\ensuremath{\,M_{\rm E}}}'+'\n'+
-        r'\providecommand{\re}{\ensuremath{\,R_{\rm E}}}'+'\n'+
-        r'\providecommand{\fave}{\langle F \rangle}'+'\n'+
-        r'\providecommand{\fluxcgs}{10$^9$ erg s$^{-1}$ cm$^{-2}$}'+'\n'+
-        r'\providecommand{\tess}{\textit{TESS}\xspace}'+'\n'+
-        r'\begin{table*}'+'\n'+
-        r'\centering'+'\n'+
-        r'\caption{Measured Properties from Literature}'+'\n'+
-        r'\label{tab:lit}'+'\n'+
-        r'\resizebox{\textwidth}{!}{'+'\n'+
-        r'\begin{tabular}{l l' + colstring + '}'+'\n'+
-        r'\hline' + '\n' +
-        r'& ' + namestring + r'\\' +'\n'+
-        r'\multicolumn{' + str(len(target_list) + 2) + r'}{l}{\textbf{Other identifiers}:} \\' + '\n' +
-        r'& \tess Input Catalog' + tic_id_str + r' & \\' + '\n' +
-        r'& TYCHO-2' + tycho_id_str + r' & \\'  + '\n' +
-        r'& 2MASS' + twomass_id_str + r' & \\' + '\n' +
-        r'\hline' + '\n' +               
-        r'\multicolumn{' + str(len(target_list) + 2) + r'}{l}{\textbf{Astrometric Parameters}:} \\' + '\n' )
+        chunk_size = int(max_targets_per_table)
+    n_chunks = max(1, int(np.ceil(n_targets / chunk_size)))
 
-            write(ra_arr, fout)
-            write(dec_arr, fout)
-            write(pmra_arr, fout)
-            write(pmdec_arr, fout)
-            write(parallax_arr, fout)
-            write(vsini_arr, fout)
-            fout.write(r'\multicolumn{' + str(len(TIC_IDs) + 2) + r'}{l}{\textbf{Photometric Parameters}:} \\' + '\n')
-            write(gaia_g_arr, fout)
-            write(gaia_bp_arr, fout)
-            write(gaia_rp_arr, fout)
-            write(tmag_arr, fout)
-            write(j_2mass_arr, fout)
-            write(h_2mass_arr, fout)
-            write(k_2mass_arr, fout)
-            write(wise1_arr, fout)
-            write(wise2_arr, fout)
-            write(wise3_arr, fout)
-            write(wise4_arr, fout)
+    # Deriving the output filename(s). The first table keeps the classic 'lit_table.tex'
+    # name (bumping a numeric suffix if it already exists); continuation tables append '_2', '_3', ...
+    first_name = 'lit_table.tex'
+    suffix = 2
+    while os.path.exists(f'{outputpath}/{first_name}'):
+        first_name = f'lit_table_{suffix}.tex'
+        suffix += 1
+    stem = first_name[:-len('.tex')]
+    filenames = [first_name] + [f'{stem}_{k}.tex' for k in range(2, n_chunks + 1)]
+    print('Saving this table as ' + ', '.join(filenames) + '...')
+
+    extra_cols = 3 if add_source_column else 2
+
+    def _row_slice(arr, sl):
+        '''Return a table row for the targets in slice `sl`: label cell(s) + sliced target
+        cells + any trailing source cell.'''
+        label = arr[:1]
+        entries = arr[1:1 + n_targets]
+        tail = arr[1 + n_targets:]  # the source cell, if add_source_column added one
+        return label + entries[sl] + tail
+
+    def _write_chunk(fname, sl, is_first, is_last):
+        chunk_targets = list(target_list[sl])
+        n_chunk = len(chunk_targets)
+        colstring = 'cc' + 'c' * n_chunk
+        namestring = ''.join(' & ' + t for t in chunk_targets)
+        tic_id_str = ''.join(tic_id_list[sl])
+        tycho_id_str = ''.join(tycho_id_list[sl])
+        twomass_id_str = ''.join(twomass_id_list[sl])
+        gaia_id_str = ''.join(gaia_id_list[sl])
+
+        caption = (r'\caption{Measured Properties from Literature}' if is_first
+                   else r'\caption{\textit{(Continued)}}')
+
+        with open(f'{outputpath}/{fname}', 'w') as fout:
+            fout.write(preamble)
+            fout.write(r'\begin{table*}' + '\n' +
+                       r'\centering' + '\n' +
+                       caption + '\n')
+            if is_first:
+                fout.write(r'\label{tab:lit}' + '\n')
+            fout.write(r'\resizebox{\textwidth}{!}{' + '\n')
+
+            if add_source_column == True:
+                fout.write(r'\begin{tabular}{ll' + colstring + '}'+'\n'+
+                    r'\hline' + '\n' +
+                    r'& ' + namestring + r' & Source \\' +'\n'+
+                    r'\multicolumn{' + str(n_chunk + 3) + r'}{l}{\textbf{Other identifiers}:} \\' + '\n' +
+                    r'& \tess Input Catalog' + tic_id_str + r'\\' + '\n' +
+                    r'& TYCHO-2' + tycho_id_str + r' & \\'  + '\n' +
+                    r'& 2MASS' + twomass_id_str + r' & \\' + '\n' +
+                    r'& Gaia DR3' + gaia_id_str + r' & \\' + '\n' +
+                    r'\hline' + '\n' +
+                    r'\multicolumn{' + str(n_chunk + 3) + r'}{l}{\textbf{Astrometric Parameters}:} \\' + '\n')
+            else:
+                fout.write(r'\begin{tabular}{l l' + colstring + '}'+'\n'+
+                    r'\hline' + '\n' +
+                    r'& ' + namestring + r'\\' +'\n'+
+                    r'\multicolumn{' + str(n_chunk + 2) + r'}{l}{\textbf{Other identifiers}:} \\' + '\n' +
+                    r'& \tess Input Catalog' + tic_id_str + r' & \\' + '\n' +
+                    r'& TYCHO-2' + tycho_id_str + r' & \\'  + '\n' +
+                    r'& 2MASS' + twomass_id_str + r' & \\' + '\n' +
+                    r'\hline' + '\n' +
+                    r'\multicolumn{' + str(n_chunk + 2) + r'}{l}{\textbf{Astrometric Parameters}:} \\' + '\n')
+
+            write(_row_slice(ra_arr, sl), fout)
+            write(_row_slice(dec_arr, sl), fout)
+            write(_row_slice(pmra_arr, sl), fout)
+            write(_row_slice(pmdec_arr, sl), fout)
+            write(_row_slice(parallax_arr, sl), fout)
+            write(_row_slice(vsini_arr, sl), fout)
+            fout.write(r'\multicolumn{' + str(n_chunk + extra_cols) + r'}{l}{\textbf{Photometric Parameters}:} \\' + '\n')
+            write(_row_slice(gaia_g_arr, sl), fout)
+            write(_row_slice(gaia_bp_arr, sl), fout)
+            write(_row_slice(gaia_rp_arr, sl), fout)
+            write(_row_slice(tmag_arr, sl), fout)
+            write(_row_slice(j_2mass_arr, sl), fout)
+            write(_row_slice(h_2mass_arr, sl), fout)
+            write(_row_slice(k_2mass_arr, sl), fout)
+            write(_row_slice(wise1_arr, sl), fout)
+            write(_row_slice(wise2_arr, sl), fout)
+            write(_row_slice(wise3_arr, sl), fout)
+            if add_source_column == True:
+                if wise4count > 0:
+                    write(_row_slice(wise4_arr, sl), fout)
+            else:
+                write(_row_slice(wise4_arr, sl), fout)
 
             fout.write(r'\hline' + '\n' +
                        r'\end{tabular}' + '\n' +
-                       r'} % end resizebox' + '\n' + 
-                       r'\vspace{2mm}' + '\n' +
-                       r'\begin{minipage}{\textwidth}' + '\n' +
-                       r'\textbf{Notes:}' + '\n' +
-                       r'\footnotesize' + '\n' +
-                       r'The uncertainties of the photometric measurements have a systematic floor applied that is usually larger than the reported catalog errors.\\' + '\n' +
-                       r'$\ddagger$ Right Ascension and Declination are in epoch J2000. Coordinates are from Vizier where Gaia RA and Dec have been precessed and corrected from epoch J2016.\\' + '\n' +
-                       r'Sources: (1) \cite{GaiaDR3}; (2) \S\ref{subsubsec:tres} \& \S\ref{subsubsec:chiron}; (3) \cite{Stassun:2019}; (4) \cite{Cutri:2003, Skrutskie:2006}; (5) \cite{Wright:2010, Cutri:2012}' + '\n' +
-                       r'\end{minipage}' + '\n' +
-                       r'\end{table*}')
-    
+                       r'} % end resizebox' + '\n')
+            if is_last:
+                # the minipage notes block is only used in the final table
+                fout.write(notes)
+            fout.write(r'\end{table*}')
+            if not is_last:
+                # keep every piece except the last on the same table number
+                fout.write('\n' + r'\addtocounter{table}{-1}')
+
+    for k, fname in enumerate(filenames):
+        sl = slice(k * chunk_size, min((k + 1) * chunk_size, n_targets))
+        _write_chunk(fname, sl, is_first=(k == 0), is_last=(k == n_chunks - 1))
+
+
 
 def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False, multistar=False, parameters=None):
     '''

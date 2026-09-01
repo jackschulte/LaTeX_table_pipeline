@@ -70,12 +70,12 @@ def grab_tres_vsini(username, password, TICID):
     # f.write(myClass.vars["rvtable"])
     # f.close()
     data = pd.read_csv(datatable, sep='\s+', header=0)
+    data = data[(data.method == 'SPC2.9') | (data['spec.'] == 'chiron')]
     vsini = data.vsini
     vsini_err = data.vsini_err
 
     mean_vsini = np.mean(vsini)
     SEM_vsini = np.std(vsini, ddof=1) / np.sqrt(np.size(vsini)) # standard error of the mean
-    propagated_error = 1/(np.sum(1/vsini_err))
 
 
     return mean_vsini, SEM_vsini
