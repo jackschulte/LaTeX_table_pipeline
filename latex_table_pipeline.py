@@ -203,13 +203,20 @@ def grab_priors(file_prefix, path):
     '''
 
     columns = ['variable', 'meanvalue', 'stdev', 'low_bound', 'up_bound', 'starting_value'] # these column names only make sense for gaussian column names
-    priors = pd.read_csv(path + file_prefix + '.priors.final', sep=r'\s+', skiprows=1, header=None, comment='#', names=columns)
+    priors = pd.read_csv(path + file_prefix + '.priors.final', sep=r'\s+', skiprows=1, header=None, comment='#', names=columns, on_bad_lines='skip')
 
     for i in range(len(priors)):
-        # find linked parameters and replace them with the first instance of the parameter
-        if type(priors.meanvalue[i]) == str:
-            if (priors.meanvalue[i] in priors.variable.values) or (priors.meanvalue[i].replace('_0', '') in priors.variable.values):
-                priors.loc[i, 'meanvalue'] = priors.meanvalue[priors.variable == priors.meanvalue[i].replace('_0', '')].iloc[0]
+        # find linked parameters (meanvalue holds the name of another variable)
+        # and replace them with that variable's value
+        val = priors.meanvalue[i]
+        if not isinstance(val, str):
+            continue
+        # try the exact name first, then fall back to stripping the '_0' suffix
+        for candidate in (val, val.replace('_0', '')):
+            match = priors.loc[priors.variable == candidate, 'meanvalue']
+            if len(match):
+                priors.loc[i, 'meanvalue'] = match.iloc[0]
+                break
     priors['meanvalue'] = priors['meanvalue'].astype(float) # to ensure that all mean values are floats
     return priors
 
@@ -222,6 +229,9 @@ def make_median_string(medians, param, array):
     medians: Pandas DataFrame containing the median values obtained using the grab_medians function.
     param: the parameter to generate a string for
     array: the array corresponding to the table row that the parameter should be appended to
+
+    Exactly one cell string is appended per call so that the row can be sliced by target index
+    (e.g. when splitting a long target list across multiple tables).
     '''
     param = param+'_0'
 
@@ -246,8 +256,7 @@ def make_median_string(medians, param, array):
         else:
             errstring = r'^{+' + up_str + '}_{-' + low_str + '}'
 
-        array.append('& $' + val_str)
-        array.append(errstring + '$ ')
+        array.append('& $' + val_str + errstring + '$ ')
     else:
         array.append('& ---')
 
@@ -725,7 +734,8 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
 
 
 
-def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False, multistar=False, parameters=None):
+def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False, multistar=False, parameters=None,
+              max_targets_per_table=5):
     '''
     Generates a median table given the path to EXOFASTv2 output files.
 
@@ -737,6 +747,10 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     outputpath: the folder in which the table should be generated. Current working directory by default
     parameters: optional list of parameter names to include in the table. Defaults to the set of parameters
         used in Schulte+ 2025
+    max_targets_per_table: the maximum number of targets shown in a single table. If len(target_list) exceeds this value, the
+        targets are split across multiple median_table .tex files. Every table after the first is captioned "\\textit{(Continued)}"
+        and every table except the last gets "\\addtocounter{table}{-1}" so that all pieces share one table number. The
+        \\begin{flushleft} notes block is only written in the last table. Set to None (or 0) to force a single table.
     '''
 
     def _normalize_param_name(name):
@@ -900,14 +914,24 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     if os.path.exists(outputpath) == False:
         os.mkdir(outputpath)
 
-    newfile = 'median_table.tex'
+    # Deciding how to split the targets across tables
+    n_targets = len(target_list)
+    if not max_targets_per_table or max_targets_per_table >= n_targets:
+        chunk_size = n_targets
+    else:
+        chunk_size = int(max_targets_per_table)
+    n_chunks = max(1, int(np.ceil(n_targets / chunk_size)))
 
-    # if this file exists, come up with a new name
-    i = 2
-    while os.path.exists(f'{outputpath}/{newfile}'):
-        newfile = 'median_table_' + str(i) + '.tex'
-        i += 1
-    print(f'Saving this table as {newfile}...')
+    # Deriving the output filename(s). The first table keeps the classic 'median_table.tex'
+    # name (bumping a numeric suffix if it already exists); continuation tables append '_2', '_3', ...
+    first_name = 'median_table.tex'
+    suffix = 2
+    while os.path.exists(f'{outputpath}/{first_name}'):
+        first_name = f'median_table_{suffix}.tex'
+        suffix += 1
+    stem = first_name[:-len('.tex')]
+    filenames = [first_name] + [f'{stem}_{k}.tex' for k in range(2, n_chunks + 1)]
+    print('Saving this table as ' + ', '.join(filenames) + '...')
 
     for ii in range(len(target_list)):
         medians = grab_medians(path=path, file_prefix=file_prefix_list[ii], bimodal=bimodal)
@@ -916,49 +940,49 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
             if _normalize_param_name(param_name) in selected_parameters or _normalize_param_name(median_key) in selected_parameters:
                 make_median_string(medians, median_key, labels)
 
-    colstring = 'lc'
-    namestring = ''
-    
-    for ii in range(len(target_list)):
-        colstring+='c'
-        namestring += (' & ' + target_list[ii])
-
-    # Collecting priors to put at the top of the table
-    parallax_prior = '' # initializing strings
-    metallicity_prior = ''
-    extinction_prior = ''
-    dilution_prior = ''
+    # Collecting priors to put at the top of the table (one ' & ...' entry per target so they can be sliced)
+    parallax_prior = [] # initializing lists
+    metallicity_prior = []
+    extinction_prior = []
+    dilution_prior = []
     if bimodal == False:
         dilute_bool = np.zeros_like(target_list) # to keep track of which targets were fit for dilution
+
+        def prior_value(priortable, column, variable):
+            # EXOFASTv2 prior files are inconsistent about capitalization (e.g. 'Av' vs 'av'),
+            # so match the variable name case-insensitively; return NaN if it is absent.
+            rows = priortable[priortable.variable.str.lower() == variable.lower()]
+            return rows[column].iloc[0] if len(rows) else np.nan
+
         for ii in range(len(target_list)):
             priortable = grab_priors(file_prefix_list[ii], path)
-            parallax_prior_mean = priortable.meanvalue[priortable.variable == 'parallax'].iloc[0]
-            parallax_prior_stdev = priortable.stdev[priortable.variable == 'parallax'].iloc[0]
-            parallax_prior += (r'& $\mathcal{G}$[' + round_sig_figs(parallax_prior_mean, 5) + r', ' + round_sig_figs(parallax_prior_stdev, 5) + r'] ')
-            metallicity_prior_mean = priortable.meanvalue[priortable.variable == 'feh'].iloc[0]
-            metallicity_prior_stdev = priortable.stdev[priortable.variable == 'feh'].iloc[0]
-            metallicity_prior += (r'& $\mathcal{G}$[' + round_sig_figs(metallicity_prior_mean, 5) + r', ' + round_sig_figs(metallicity_prior_stdev, 5) + r'] ')
-            extinction_prior_upperbound = priortable.up_bound[priortable.variable == 'Av'].iloc[0]
-            extinction_prior += (r'& $\mathcal{U}$[0, ' + round_sig_figs(extinction_prior_upperbound, 5) + r'] ')
+            parallax_prior_mean = prior_value(priortable, 'meanvalue', 'parallax')
+            parallax_prior_stdev = prior_value(priortable, 'stdev', 'parallax')
+            parallax_prior.append(r'& $\mathcal{G}$[' + round_sig_figs(parallax_prior_mean, 5) + r', ' + round_sig_figs(parallax_prior_stdev, 5) + r'] ')
+            metallicity_prior_mean = prior_value(priortable, 'meanvalue', 'feh')
+            metallicity_prior_stdev = prior_value(priortable, 'stdev', 'feh')
+            metallicity_prior.append(r'& $\mathcal{G}$[' + round_sig_figs(metallicity_prior_mean, 5) + r', ' + round_sig_figs(metallicity_prior_stdev, 5) + r'] ')
+            extinction_prior_upperbound = prior_value(priortable, 'up_bound', 'Av')
+            extinction_prior.append(r'& $\mathcal{U}$[0, ' + round_sig_figs(extinction_prior_upperbound, 5) + r'] ')
 
             for x in priortable.variable: # finding the dilution term
-                match = re.findall('dilute', x)
-                if len(match) > 0:
-                    dilute_colname = (match[0])
-                    dilution_prior_mean = priortable.meanvalue[priortable.variable == dilute_colname].iloc[0]
-                    dilution_prior_stdev = priortable.stdev[priortable.variable == dilute_colname].iloc[0]
+                if 'dilute' in x:
+                    # use the first dilution term (dilute_0); later dilute_N rows are
+                    # linked to it and carry a zeroed stdev
+                    dilution_prior_mean = priortable.meanvalue[priortable.variable == x].iloc[0]
+                    dilution_prior_stdev = priortable.stdev[priortable.variable == x].iloc[0]
 
                     dilute_bool[ii] = 1
+                    break
             if dilute_bool[ii]:
-                dilution_prior += (r'& $\mathcal{G}$[' + round_sig_figs(dilution_prior_mean, 5) + r', ' + remove_sci_notation(float(round_sig_figs(dilution_prior_stdev, 5))) + r'] ')
+                dilution_prior.append(r'& $\mathcal{G}$[' + round_sig_figs(dilution_prior_mean, 5) + r', ' + remove_sci_notation(float(round_sig_figs(dilution_prior_stdev, 5))) + r'] ')
                 # above line should be cleaned up in a future version. Maybe make a new function that removes scientific notation and sets sig figs for all numbers
             else:
-                dilution_prior += (r'& --- ')
+                dilution_prior.append(r'& --- ')
 
     # Generating the preamble
-    
-    with open(f'{outputpath}/{newfile}', 'w') as fout: 
-        fout.write(r'\providecommand{\bjdtdb}{\ensuremath{\rm {BJD_{TDB}}}}'+'\n'+
+
+    preamble = (r'\providecommand{\bjdtdb}{\ensuremath{\rm {BJD_{TDB}}}}'+'\n'+
     r'\providecommand{\feh}{\ensuremath{\left[{\rm Fe}/{\rm H}\right]}}'+'\n'+
     r'\providecommand{\teff}{\ensuremath{T_{\rm eff}}}'+'\n'+
     r'\providecommand{\teq}{\ensuremath{T_{\rm eq}}}'+'\n'+
@@ -973,42 +997,64 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     r'\providecommand{\re}{\ensuremath{\,R_{\rm E}}}'+'\n'+
     r'\providecommand{\fave}{\langle F \rangle}'+'\n'+
     r'\providecommand{\fluxcgs}{10$^9$ erg s$^{-1}$ cm$^{-2}$}'+'\n'+
-    r'\providecommand{\tess}{\textit{TESS}\xspace}'+'\n'+
-    r'\begin{table*}'+'\n'+
-    r'\centering'+'\n'+
-    r'\caption{Median Values and 68\% Confidence Intervals for Fitted Stellar and Planetary Parameters}'+'\n'+
-    r'\label{tab:median}'+'\n'+
-    r'\scriptsize'+'\n'+
-    r'\begin{tabular}{ll' + colstring + '}'+'\n'+
-    r'\hline' + '\n' +
-    r'& ' + namestring + r'\\' +'\n'+
-    r'\hline' + '\n' +
-    r'\multicolumn{' + str(len(target_list) + 2) + r'}{l}{\textbf{Priors}:} \\' + '\n' +
-    r'$\pi$ & Gaia Parallax (mas)' + parallax_prior + r'\\' + '\n' +
-    r'$[{\rm Fe/H}]$ & Metallicity (dex)' + metallicity_prior + r'\\' + '\n' +
-    r'$A_V$ & V-band extinction (mag)' + extinction_prior + r'\\' + '\n' + 
-    r'$D_T$ & Dilution in \tess' + dilution_prior + r'\\' + '\n' +
-    r'\hline' + '\n' +               
-    r'\multicolumn{' + str(len(target_list) + 2) + r'}{l}{\textbf{Stellar Parameters}:} \\' + '\n' )
-    #r'\smallskip\\\multicolumn{2}{l}{Stellar Parameters:}&\smallskip\\'+'\n')
+    r'\providecommand{\tess}{\textit{TESS}\xspace}'+'\n')
 
-            
-        for param_name, median_key, labels in stellar_parameter_specs:
-            if _normalize_param_name(param_name) in selected_parameters:
-                write(labels, fout)
+    def _row_slice(arr, sl):
+        '''Return a table row for the targets in slice `sl`: the label cell(s) followed by the sliced target cells.'''
+        return arr[:1] + arr[1:][sl]
 
-        fout.write(r'\multicolumn{' + str(len(target_list) + 2) + r'}{l}{\textbf{Planetary Parameters}:} \\' + '\n')
-        for param_name, median_key, labels in planetary_parameter_specs:
-            if _normalize_param_name(param_name) in selected_parameters:
-                write(labels, fout)
-        
-        # conclude with \enddata at the bottom of the input .tex file
-        fout.write(r'\hline' + '\n' + 
-                   r'\end{tabular}' + '\n' +
-                   r'\begin{flushleft}' + '\n' +
-                   r'\textbf{Notes:} The priors for each system are labeled as $\mathcal{G}$[mean, standard deviation] if they are Gaussian priors and $\mathcal{U}$[lower limit, upper limit] if they are uniform priors.' + '\n' +
-                   r'\end{flushleft}' + '\n' +
-                   r'\end{table*}')
+    def _write_chunk(fname, sl, is_first, is_last):
+        chunk_targets = list(target_list[sl])
+        n_chunk = len(chunk_targets)
+        colstring = 'lc' + 'c' * n_chunk
+        namestring = ''.join(' & ' + t for t in chunk_targets)
+        caption = (r'\caption{Median Values and 68\% Confidence Intervals for Fitted Stellar and Planetary Parameters}'
+                   if is_first else r'\caption{\textit{(Continued)}}')
+
+        with open(f'{outputpath}/{fname}', 'w') as fout:
+            fout.write(preamble)
+            fout.write(r'\begin{table*}' + '\n' +
+                       r'\centering' + '\n' +
+                       caption + '\n')
+            if is_first:
+                fout.write(r'\label{tab:median}' + '\n')
+            fout.write(r'\scriptsize' + '\n' +
+                       r'\begin{tabular}{ll' + colstring + '}'+'\n'+
+                       r'\hline' + '\n' +
+                       r'& ' + namestring + r'\\' +'\n'+
+                       r'\hline' + '\n' +
+                       r'\multicolumn{' + str(n_chunk + 2) + r'}{l}{\textbf{Priors}:} \\' + '\n' +
+                       r'$\pi$ & Gaia Parallax (mas)' + ''.join(parallax_prior[sl]) + r'\\' + '\n' +
+                       r'$[{\rm Fe/H}]$ & Metallicity (dex)' + ''.join(metallicity_prior[sl]) + r'\\' + '\n' +
+                       r'$A_V$ & V-band extinction (mag)' + ''.join(extinction_prior[sl]) + r'\\' + '\n' +
+                       r'$D_T$ & Dilution in \tess' + ''.join(dilution_prior[sl]) + r'\\' + '\n' +
+                       r'\hline' + '\n' +
+                       r'\multicolumn{' + str(n_chunk + 2) + r'}{l}{\textbf{Stellar Parameters}:} \\' + '\n')
+
+            for param_name, median_key, labels in stellar_parameter_specs:
+                if _normalize_param_name(param_name) in selected_parameters:
+                    write(_row_slice(labels, sl), fout)
+
+            fout.write(r'\multicolumn{' + str(n_chunk + 2) + r'}{l}{\textbf{Planetary Parameters}:} \\' + '\n')
+            for param_name, median_key, labels in planetary_parameter_specs:
+                if _normalize_param_name(param_name) in selected_parameters:
+                    write(_row_slice(labels, sl), fout)
+
+            # conclude with the closing rules; the flushleft notes block is only used in the final table
+            fout.write(r'\hline' + '\n' +
+                       r'\end{tabular}' + '\n')
+            if is_last:
+                fout.write(r'\begin{flushleft}' + '\n' +
+                           r'\textbf{Notes:} The priors for each system are labeled as $\mathcal{G}$[mean, standard deviation] if they are Gaussian priors and $\mathcal{U}$[lower limit, upper limit] if they are uniform priors.' + '\n' +
+                           r'\end{flushleft}' + '\n')
+            fout.write(r'\end{table*}')
+            if not is_last:
+                # keep every piece except the last on the same table number
+                fout.write('\n' + r'\addtocounter{table}{-1}')
+
+    for k, fname in enumerate(filenames):
+        sl = slice(k * chunk_size, min((k + 1) * chunk_size, n_targets))
+        _write_chunk(fname, sl, is_first=(k == 0), is_last=(k == n_chunks - 1))
 
 def _extract_grid_rows(html, heading_text):
     """Extract the JavaScript row-data array for the grid beneath a named section heading.
