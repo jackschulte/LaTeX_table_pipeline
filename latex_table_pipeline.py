@@ -332,20 +332,13 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
     TESS_mags = [] # TESS mags are in exofop, not Vizier
     TESS_mags_err = []
     for toi in target_list:
-        if ('B' or 'C') in toi[-1]:
-            ticid_A = TOI_df.loc[toi_id]['TIC ID']
-            # Query the TIC v8.2 for the TIC identifier of the nearest sources
-            tic_columns = ['_r', 'TIC']
-            vtic = Vizier(columns=tic_columns, catalog='IV/39/tic82')
-            data_tic = vtic.query_region('TIC ' + str(ticid_A), radius=Angle(6, "arcsec"))
-        else:
-            toi_id = float(toi[4:]) + 0.01
-            TIC_ID = TOI_df.loc[toi_id]['TIC ID']
-            TESS_mag = TOI_df.loc[toi_id]['TESS Mag']
-            TESS_mag_err = TOI_df.loc[toi_id]['TESS Mag err']
-            TIC_IDs.append(TIC_ID)
-            TESS_mags.append(TESS_mag)
-            TESS_mags_err.append(TESS_mag_err)
+        toi_id = float(toi[4:]) + 0.01
+        TIC_ID = TOI_df.loc[toi_id]['TIC ID']
+        TESS_mag = TOI_df.loc[toi_id]['TESS Mag']
+        TESS_mag_err = TOI_df.loc[toi_id]['TESS Mag err']
+        TIC_IDs.append(TIC_ID)
+        TESS_mags.append(TESS_mag)
+        TESS_mags_err.append(TESS_mag_err)
     
     # grabbing vsini from the TRES/CHIRON site
 
@@ -734,8 +727,8 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
 
 
 
-def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False, multistar=False, parameters=None,
-              max_targets_per_table=5):
+def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False, parameters=None,
+              probabilities=None, max_targets_per_table=5):
     '''
     Generates a median table given the path to EXOFASTv2 output files.
 
@@ -745,8 +738,19 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     path: path of EXOFASTv2 output files
     file_prefix_list: list of prefixes used in EXOFASTv2 file generation
     outputpath: the folder in which the table should be generated. Current working directory by default
+    bimodal: boolean to decide whether or not to use the files that are output by splitpdf.pro. When True the output
+        files are named bimodal_median_table.tex (rather than median_table.tex), the low- and high-mass solutions of a
+        given target are kept together in the same table when the target list is split (see max_targets_per_table), and
+        the header is written three rows deep: the system name spanning its solution columns, then "Low-mass solution"
+        or "High-mass solution" for each column, then the probabilities if they were given. The system name and the
+        solution label are read off the target name ('TOI-4138 (Low Mass)'), falling back to the file prefix
+        ('257060897.lowmass') when the target name carries no low-/high-mass marker.
     parameters: optional list of parameter names to include in the table. Defaults to the set of parameters
         used in Schulte+ 2025
+    probabilities: optional list of the probability of each solution, ordered to match file_prefix_list. Each entry is
+        written as "X\\% probability" on its own header line, directly beneath the solution the column holds. Entries
+        may be numbers understood as percentages (32 or 32.5), pre-formatted strings ('32%', '~50\\% probability'), or
+        None for a blank cell.
     max_targets_per_table: the maximum number of targets shown in a single table. If len(target_list) exceeds this value, the
         targets are split across multiple median_table .tex files. Every table after the first is captioned "\\textit{(Continued)}"
         and every table except the last gets "\\addtocounter{table}{-1}" so that all pieces share one table number. The
@@ -755,6 +759,30 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
 
     def _normalize_param_name(name):
         return re.sub(r'[^a-z0-9]', '', str(name).lower())
+
+    def _format_probability(prob):
+        '''Turns an entry of `probabilities` into a header cell such as '32\\% probability'.'''
+        if prob is None:
+            return ''
+        if isinstance(prob, str):
+            text = prob.strip()
+            if not text:
+                return ''
+        else:
+            if isinstance(prob, float) and np.isnan(prob):
+                return ''
+            text = f'{float(prob):g}'
+        text = re.sub(r'(?<!\\)%', r'\\%', text) # escape bare percent signs so LaTeX does not comment out the line
+        if 'probability' not in text.lower():
+            if not text.endswith(r'\%'):
+                text += r'\%'
+            text += ' probability'
+        return text
+
+    if probabilities is not None and len(probabilities) != len(file_prefix_list):
+        raise ValueError(f'probabilities has {len(probabilities)} entries but file_prefix_list has {len(file_prefix_list)}; '
+                         'the two must line up index for index.')
+    probability_cells = [_format_probability(p) for p in probabilities] if probabilities is not None else None
 
     default_parameters = [
         'mstar', 'rstar', 'lstar', 'rhostar', 'logg', 'teff', 'feh', 'initfeh', 'age', 'eep', 'Av',
@@ -916,18 +944,87 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
 
     # Deciding how to split the targets across tables
     n_targets = len(target_list)
-    if not max_targets_per_table or max_targets_per_table >= n_targets:
-        chunk_size = n_targets
-    else:
-        chunk_size = int(max_targets_per_table)
-    n_chunks = max(1, int(np.ceil(n_targets / chunk_size)))
 
-    # Deriving the output filename(s). The first table keeps the classic 'median_table.tex'
-    # name (bumping a numeric suffix if it already exists); continuation tables append '_2', '_3', ...
-    first_name = 'median_table.tex'
+    # Columns are first collected into groups that the split is not allowed to break up. Normally every
+    # target is its own group, but in bimodal mode the low- and high-mass solutions of a target belong to
+    # the same group so that they always land in the same piece of the table.
+    # matches the low-/high-mass markers used in target names and in the file prefixes written by
+    # splitpdf.pro, e.g. ' (Low-mass solution)', ' (High Mass)', '.lowmass', '_highmass'
+    solution_marker = re.compile(r'[\s._-]*[(\[]?\s*(low|high)[\s._-]*mass\b(?:[\s._-]*(?:solutions?|solns?))?\s*[)\]]?',
+                                 re.IGNORECASE)
+
+    def _strip_solution_marker(text):
+        '''Removes any low-/high-mass marker from `text`, tidying the whitespace the removal leaves behind.'''
+        return re.sub(r'\s+', ' ', solution_marker.sub(' ', text)).strip()
+
+    def _solution_group_key(index):
+        '''Returns a key identifying the target that column `index` belongs to.
+
+        The low-/high-mass markers written by splitpdf.pro are stripped from the file prefix, so that
+        e.g. '257060897.lowmass' and '257060897.highmass' share a key. If the prefix carries no marker
+        the target name is tried instead ('TOI-4138 (Low Mass)' -> 'toi-4138'), and a column with no
+        marker at all is left in a group of its own.
+        '''
+        for candidate in (str(file_prefix_list[index]), str(target_list[index])):
+            if solution_marker.search(candidate):
+                stripped = _strip_solution_marker(candidate)
+                if stripped:
+                    return stripped.lower()
+        return f'__ungrouped_{index}__'
+
+    def _system_name(index):
+        '''Returns the system name heading column `index`: its target name with the low-/high-mass marker
+        removed ('TOI-4138 (Low Mass)' -> 'TOI-4138'). A target name carrying no marker is used as it is.
+        '''
+        name = str(target_list[index])
+        return _strip_solution_marker(name) or name
+
+    def _solution_label(index):
+        '''Returns 'Low-mass solution' or 'High-mass solution' for column `index`, or '' if it is neither.'''
+        for candidate in (str(target_list[index]), str(file_prefix_list[index])):
+            match = solution_marker.search(candidate)
+            if match:
+                return match.group(1).capitalize() + '-mass solution'
+        return ''
+
+    groups = []
+    if bimodal:
+        group_index = {}
+        for ii in range(n_targets):
+            key = _solution_group_key(ii)
+            if key in group_index:
+                groups[group_index[key]].append(ii)
+            else:
+                group_index[key] = len(groups)
+                groups.append([ii])
+    else:
+        groups = [[ii] for ii in range(n_targets)]
+
+    # Packing the groups into tables. A group is never split, so a group that is on its own larger than
+    # max_targets_per_table gets a table to itself and overruns the limit.
+    if not max_targets_per_table or max_targets_per_table >= n_targets:
+        chunks = [list(groups)] # everything fits in one table
+    else:
+        limit = int(max_targets_per_table)
+        chunks = []
+        current = []
+        for group in groups:
+            if current and sum(len(g) for g in current) + len(group) > limit:
+                chunks.append(current)
+                current = []
+            current.append(group)
+        if current:
+            chunks.append(current)
+    n_chunks = len(chunks)
+
+    # Deriving the output filename(s). The first table keeps the classic 'median_table.tex' name
+    # ('bimodal_median_table.tex' for a bimodal table), bumping a numeric suffix if it already exists;
+    # continuation tables append '_2', '_3', ...
+    base_name = 'bimodal_median_table' if bimodal else 'median_table'
+    first_name = f'{base_name}.tex'
     suffix = 2
     while os.path.exists(f'{outputpath}/{first_name}'):
-        first_name = f'median_table_{suffix}.tex'
+        first_name = f'{base_name}_{suffix}.tex'
         suffix += 1
     stem = first_name[:-len('.tex')]
     filenames = [first_name] + [f'{stem}_{k}.tex' for k in range(2, n_chunks + 1)]
@@ -945,7 +1042,8 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     metallicity_prior = []
     extinction_prior = []
     dilution_prior = []
-    if bimodal == False:
+    show_priors = (bimodal == False) # the prior files are only read for a normal (non-split) fit
+    if show_priors:
         dilute_bool = np.zeros_like(target_list) # to keep track of which targets were fit for dilution
 
         def prior_value(priortable, column, variable):
@@ -999,17 +1097,24 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     r'\providecommand{\fluxcgs}{10$^9$ erg s$^{-1}$ cm$^{-2}$}'+'\n'+
     r'\providecommand{\tess}{\textit{TESS}\xspace}'+'\n')
 
-    def _row_slice(arr, sl):
-        '''Return a table row for the targets in slice `sl`: the label cell(s) followed by the sliced target cells.'''
-        return arr[:1] + arr[1:][sl]
+    def _row_slice(arr, idx):
+        '''Return a table row for the targets at indices `idx`: the label cell(s) followed by those targets' cells.'''
+        cells = arr[1:]
+        return arr[:1] + [cells[i] for i in idx]
 
-    def _write_chunk(fname, sl, is_first, is_last):
-        chunk_targets = list(target_list[sl])
-        n_chunk = len(chunk_targets)
+    def _write_chunk(fname, chunk_groups, is_first, is_last):
+        idx = [i for group in chunk_groups for i in group]
+        n_chunk = len(idx)
         colstring = 'lc' + 'c' * n_chunk
-        namestring = ''.join(' & ' + t for t in chunk_targets)
-        caption = (r'\caption{Median Values and 68\% Confidence Intervals for Fitted Stellar and Planetary Parameters}'
-                   if is_first else r'\caption{\textit{(Continued)}}')
+        if bimodal:
+            # one system name per group, spanning that system's solution columns
+            namestring = ''.join(r' & \multicolumn{' + str(len(group)) + r'}{c}{' + _system_name(group[0]) + r'}'
+                                 for group in chunk_groups)
+        else:
+            namestring = ''.join(' & ' + str(target_list[i]) for i in idx)
+        title = (r'Median Values and 68\% Confidence Intervals for Solutions which are Bimodal in Mass' if bimodal
+                 else r'Median Values and 68\% Confidence Intervals for Fitted Stellar and Planetary Parameters')
+        caption = r'\caption{' + title + '}' if is_first else r'\caption{\textit{(Continued)}}'
 
         with open(f'{outputpath}/{fname}', 'w') as fout:
             fout.write(preamble)
@@ -1017,33 +1122,41 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
                        r'\centering' + '\n' +
                        caption + '\n')
             if is_first:
-                fout.write(r'\label{tab:median}' + '\n')
+                fout.write(r'\label{tab:' + ('bimodal' if bimodal else 'median') + '}' + '\n')
             fout.write(r'\scriptsize' + '\n' +
                        r'\begin{tabular}{ll' + colstring + '}'+'\n'+
                        r'\hline' + '\n' +
-                       r'& ' + namestring + r'\\' +'\n'+
-                       r'\hline' + '\n' +
-                       r'\multicolumn{' + str(n_chunk + 2) + r'}{l}{\textbf{Priors}:} \\' + '\n' +
-                       r'$\pi$ & Gaia Parallax (mas)' + ''.join(parallax_prior[sl]) + r'\\' + '\n' +
-                       r'$[{\rm Fe/H}]$ & Metallicity (dex)' + ''.join(metallicity_prior[sl]) + r'\\' + '\n' +
-                       r'$A_V$ & V-band extinction (mag)' + ''.join(extinction_prior[sl]) + r'\\' + '\n' +
-                       r'$D_T$ & Dilution in \tess' + ''.join(dilution_prior[sl]) + r'\\' + '\n' +
-                       r'\hline' + '\n' +
-                       r'\multicolumn{' + str(n_chunk + 2) + r'}{l}{\textbf{Stellar Parameters}:} \\' + '\n')
+                       r'& ' + namestring + r'\\' +'\n')
+            if bimodal:
+                # which solution each column holds, under the system name it belongs to
+                fout.write(r'& ' + ''.join(' & ' + _solution_label(i) for i in idx) + r'\\' + '\n')
+            if probability_cells is not None:
+                # the probability of each solution goes on its own header line, under the solution name
+                fout.write(r'& ' + ''.join(' & ' + probability_cells[i] for i in idx) + r'\\' + '\n')
+            fout.write(r'\hline' + '\n')
+            if show_priors:
+                # the priors are only read for a normal fit, so a bimodal table has no priors block
+                fout.write(r'\multicolumn{' + str(n_chunk + 2) + r'}{l}{\textbf{Priors}:} \\' + '\n' +
+                           r'$\pi$ & Gaia Parallax (mas)' + ''.join(parallax_prior[i] for i in idx) + r'\\' + '\n' +
+                           r'$[{\rm Fe/H}]$ & Metallicity (dex)' + ''.join(metallicity_prior[i] for i in idx) + r'\\' + '\n' +
+                           r'$A_V$ & V-band extinction (mag)' + ''.join(extinction_prior[i] for i in idx) + r'\\' + '\n' +
+                           r'$D_T$ & Dilution in \tess' + ''.join(dilution_prior[i] for i in idx) + r'\\' + '\n' +
+                           r'\hline' + '\n')
+            fout.write(r'\multicolumn{' + str(n_chunk + 2) + r'}{l}{\textbf{Stellar Parameters}:} \\' + '\n')
 
             for param_name, median_key, labels in stellar_parameter_specs:
                 if _normalize_param_name(param_name) in selected_parameters:
-                    write(_row_slice(labels, sl), fout)
+                    write(_row_slice(labels, idx), fout)
 
             fout.write(r'\multicolumn{' + str(n_chunk + 2) + r'}{l}{\textbf{Planetary Parameters}:} \\' + '\n')
             for param_name, median_key, labels in planetary_parameter_specs:
                 if _normalize_param_name(param_name) in selected_parameters:
-                    write(_row_slice(labels, sl), fout)
+                    write(_row_slice(labels, idx), fout)
 
             # conclude with the closing rules; the flushleft notes block is only used in the final table
             fout.write(r'\hline' + '\n' +
                        r'\end{tabular}' + '\n')
-            if is_last:
+            if is_last and show_priors:
                 fout.write(r'\begin{flushleft}' + '\n' +
                            r'\textbf{Notes:} The priors for each system are labeled as $\mathcal{G}$[mean, standard deviation] if they are Gaussian priors and $\mathcal{U}$[lower limit, upper limit] if they are uniform priors.' + '\n' +
                            r'\end{flushleft}' + '\n')
@@ -1053,8 +1166,7 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
                 fout.write('\n' + r'\addtocounter{table}{-1}')
 
     for k, fname in enumerate(filenames):
-        sl = slice(k * chunk_size, min((k + 1) * chunk_size, n_targets))
-        _write_chunk(fname, sl, is_first=(k == 0), is_last=(k == n_chunks - 1))
+        _write_chunk(fname, chunks[k], is_first=(k == 0), is_last=(k == n_chunks - 1))
 
 def _extract_grid_rows(html, heading_text):
     """Extract the JavaScript row-data array for the grid beneath a named section heading.
@@ -1336,3 +1448,629 @@ def generate_hri_table(tic_list, toi_list, output_filename):
     """
     master_df = generate_master_table(tic_list, toi_list)
     convert_table_to_latex_and_save(master_df, output_filename)
+
+# EXOFASTv2 SED bandnames that map onto the Gaia magnitude rows of the secondary star table
+SECONDARY_GAIA_BANDS = {
+    'G': ['Gaia_G_EDR3', 'Gaia'],
+    'BP': ['Gaia_BP_EDR3', 'GaiaBP'],
+    'RP': ['Gaia_RP_EDR3', 'GaiaRP'],
+}
+
+# EXOFASTv2 SED bandnames that map onto the AO/speckle contrast rows of the secondary star table
+SECONDARY_CONTRAST_BANDS = {
+    'I': ['I', 'Ic', 'Icont'],
+    'J': ['J', 'J2M', 'Jcont'],
+    'H': ['H', 'H2M', 'Hcont'],
+    'K': ['K', 'K2M', 'Ks', 'Kcont', 'Kshort'],
+}
+
+
+def parse_sed_stars(sed_path):
+    """Parse an EXOFASTv2 SED file into the magnitudes belonging to each star.
+
+    The final column of an SED file is the star index. An index of ``1`` means the magnitude
+    belongs to star 1 alone, ``0,1`` means it is the blended magnitude of stars 0 and 1, and
+    ``1-0`` means it is a magnitude difference (a contrast) between stars 1 and 0.
+
+    Parameters
+    ----------
+    sed_path : str
+        Path to the EXOFASTv2 .sed file.
+
+    Returns
+    -------
+    dict
+        ``{star_index: {'mags': {bandname: (value, error)}, 'deltamags': {bandname: (value, error)}}}``
+        for every star index that appears in the file.
+    """
+    columns = ['bandname', 'magnitude', 'used_errors', 'catalog_errors', 'star_index']
+    sedtable = pd.read_csv(sed_path, sep=r'\s+', skiprows=1, header=None, names=columns,
+                           comment='#', dtype=str)
+
+    stars = {}
+    for _, row in sedtable.iterrows():
+        index = row['star_index']
+        if not isinstance(index, str):
+            continue # magnitudes without a star index belong to a single star fit
+        index = index.strip()
+        band = str(row['bandname']).strip()
+        try:
+            value = float(row['magnitude'])
+            error = float(row['used_errors'])
+        except (TypeError, ValueError):
+            continue
+
+        if '-' in index: # a contrast, e.g. '1-0'
+            star = int(index.split('-')[0])
+            key = 'deltamags'
+        elif ',' in index: # a blended magnitude, e.g. '0,1'. Not attributable to one star
+            continue
+        else:
+            star = int(index)
+            key = 'mags'
+
+        stars.setdefault(star, {'mags': {}, 'deltamags': {}})[key][band] = (value, error)
+
+    return stars
+
+
+def get_stellar_companions(tic_id):
+    """Fetch the stellar companions detected in high-resolution imaging from ExoFOP.
+
+    Parameters
+    ----------
+    tic_id : str or int
+        TESS Input Catalog identifier, with or without the leading "TIC " prefix.
+
+    Returns
+    -------
+    list[dict]
+        One entry per ExoFOP companion detection, with the angular separation and its
+        uncertainty (arcsec), position angle (degrees), filter, magnitude difference, and
+        observation date. An empty list is returned if the target has no companions listed.
+    """
+    tic_id = str(tic_id)
+    if tic_id.startswith('TIC '):
+        tic_id = tic_id.replace('TIC ', '')
+    url = "https://exofop.ipac.caltech.edu/tess/target.php?id=" + tic_id
+    with urlopen(url, timeout=20) as response:
+        html = response.read().decode('utf-8', 'ignore')
+
+    try:
+        rows = _extract_grid_rows(html, 'Stellar Companions')
+    except RuntimeError:
+        return []
+
+    def _to_float(value):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    detections = []
+    for row in rows:
+        sep = _to_float(row.get('sep'))
+        if sep is None:
+            continue # a detection without a separation is useless here
+        detections.append({
+            'sep': sep,
+            'sep_err': _to_float(row.get('sep_e')),
+            'pa': _to_float(row.get('pa')),
+            # ExoFOP filter strings look like 'Ks: 2.15 (0.32) microns'
+            'band': str(row.get('filt') or '').split(':')[0].strip(),
+            'dmag': _to_float(row.get('dmag')),
+            'date': row.get('odate'),
+        })
+    return detections
+
+
+def _group_companion_detections(detections, sep_tol=0.1, pa_tol=5.0):
+    """Group ExoFOP companion detections that refer to the same physical companion.
+
+    ExoFOP lists one row per filter (and per observation) for each companion, so rows are
+    grouped by their angular separation and position angle.
+
+    Parameters
+    ----------
+    detections : list[dict]
+        Detections from get_stellar_companions.
+    sep_tol : float
+        Separation tolerance, in arcsec, within which two detections are considered the same star.
+    pa_tol : float
+        Position angle tolerance, in degrees, within which two detections are considered the same star.
+
+    Returns
+    -------
+    list[list[dict]]
+        The detections, grouped by companion.
+    """
+    groups = []
+    for detection in sorted(detections, key=lambda d: d['sep']):
+        for group in groups:
+            sep_ref = np.mean([d['sep'] for d in group])
+            if abs(detection['sep'] - sep_ref) > sep_tol:
+                continue
+            pa_values = [d['pa'] for d in group if d['pa'] is not None]
+            if (detection['pa'] is not None) and pa_values:
+                pa_ref = np.mean(pa_values)
+                # wrap the difference into [-180, 180] so companions near a PA of 0 still group
+                pa_diff = abs((detection['pa'] - pa_ref + 180) % 360 - 180)
+                if pa_diff > pa_tol:
+                    continue
+            group.append(detection)
+            break
+        else:
+            groups.append([detection])
+    return groups
+
+
+def _match_companion_group(groups, deltamags, dmag_tol=0.05):
+    """Identify which ExoFOP companion corresponds to a secondary star in an SED file.
+
+    The contrasts in an SED file are taken from the same imaging observations that ExoFOP
+    reports, so a secondary star is matched to the companion whose magnitude differences
+    agree with the contrasts in the SED file.
+
+    Parameters
+    ----------
+    groups : list[list[dict]]
+        Companion detections grouped by _group_companion_detections.
+    deltamags : dict
+        ``{bandname: (value, error)}`` contrasts for the secondary star, from the SED file.
+    dmag_tol : float
+        Tolerance, in magnitudes, for calling an SED contrast and an ExoFOP contrast the same measurement.
+
+    Returns
+    -------
+    tuple
+        ``(group, matched_detections, ambiguous)``. The group is None if no companion could be
+        matched, and ambiguous is True if more than one companion matched equally well.
+    """
+    best_group = None
+    best_matches = []
+    best_score = 0
+    ambiguous = False
+
+    for group in groups:
+        matches = []
+        for value, _ in deltamags.values():
+            for detection in group:
+                if (detection['dmag'] is not None) and (abs(detection['dmag'] - value) <= dmag_tol):
+                    matches.append(detection)
+                    break
+        if len(matches) > best_score:
+            best_group, best_matches, best_score = group, matches, len(matches)
+            ambiguous = False
+        elif (len(matches) == best_score) and (best_score > 0):
+            ambiguous = True
+
+    if best_score == 0:
+        # nothing to match against (or no contrasts in the SED file): a lone companion is unambiguous
+        if len(groups) == 1:
+            return groups[0], groups[0], False
+        return None, [], len(groups) > 1
+
+    return best_group, best_matches, ambiguous
+
+
+def _companion_separation(detections):
+    """Combine the separations of several detections of one companion into a value and uncertainty.
+
+    Parameters
+    ----------
+    detections : list[dict]
+        The detections of a single companion.
+
+    Returns
+    -------
+    tuple
+        The mean angular separation (arcsec) and its uncertainty, which combines the reported
+        measurement uncertainties with the scatter between detections. The uncertainty is None
+        if neither is available.
+    """
+    separations = np.array([d['sep'] for d in detections], dtype=float)
+    sep = float(np.mean(separations))
+
+    scatter = float(np.std(separations)) if len(separations) > 1 else 0.0
+    reported = [d['sep_err'] for d in detections if d['sep_err'] is not None]
+    measurement = float(np.mean(reported)) if reported else 0.0
+
+    sep_err = np.sqrt(scatter**2 + measurement**2)
+    return sep, (sep_err if sep_err > 0 else None)
+
+
+def _round_with_errors(value, up_err, low_err, num_sig_figs=2):
+    """Round a value and its uncertainties so the uncertainties carry a set number of significant figures.
+
+    The value and both uncertainties are written to the same number of decimal places, which is set
+    by the smaller of the two uncertainties.
+
+    Parameters
+    ----------
+    value : float
+        The value to round.
+    up_err : float
+        The upper uncertainty on the value.
+    low_err : float
+        The lower uncertainty on the value.
+    num_sig_figs : int
+        The number of significant figures to keep in the uncertainties.
+
+    Returns
+    -------
+    tuple[str, str, str]
+        The rounded value and uncertainties, as strings.
+    """
+    def decimal_places(err):
+        # the number of decimal places left once the uncertainty is rounded to num_sig_figs
+        # significant figures. Trailing zeros are dropped along the way, so an uncertainty
+        # reported to one significant figure does not gain a digit it never had.
+        if (err is None) or (not np.isfinite(err)) or (err == 0):
+            return None
+        err_str = remove_sci_notation(float(round_sig_figs(err, num_sig_figs)))
+        return len(err_str.split('.')[1]) if '.' in err_str else 0
+
+    places = [p for p in (decimal_places(up_err), decimal_places(low_err)) if p is not None]
+    decimals = max(places) if places else 3 # fall back to the 3 decimals used for magnitudes elsewhere
+
+    def as_string(x):
+        return '{:.{p}f}'.format(np.round(x, decimals), p=max(decimals, 0))
+
+    return as_string(value), as_string(up_err), as_string(low_err)
+
+
+def gen_secondary_str(array, value, up_err=None, low_err=None):
+    """Append a value and its uncertainties to a row of the secondary star table.
+
+    Parameters
+    ----------
+    array : list
+        The list of strings corresponding to the table row.
+    value : float or None
+        The value to append. None (or a non-finite value) writes the '---' filler.
+    up_err : float or None
+        The upper uncertainty on the value. If None, only the value is written.
+    low_err : float or None
+        The lower uncertainty on the value. Defaults to the upper uncertainty.
+    """
+    if (value is None) or (not np.isfinite(float(value))):
+        array.append('& --- ')
+        return
+
+    if low_err is None:
+        low_err = up_err
+    if up_err is None:
+        up_err = low_err
+
+    if (up_err is None) or (not np.isfinite(float(up_err))) or (not np.isfinite(float(low_err))):
+        # no reliable errors, so the value is written on its own
+        array.append('& $' + remove_sci_notation(np.round(float(value), 3)) + '$ ')
+        return
+
+    val_str, up_str, low_str = _round_with_errors(float(value), float(up_err), float(low_err))
+    if up_str == low_str:
+        array.append('& $' + val_str + r' \pm ' + up_str + '$ ')
+    else:
+        array.append('& $' + val_str + r'^{+' + up_str + '}_{-' + low_str + '}$ ')
+
+
+def _is_unbound(star_type):
+    """Whether a classification describes a star that is not bound to the target star.
+
+    An unbound star, such as an unrelated background star, does not share the distance of the
+    system, so its angular separation cannot be turned into a projected separation.
+
+    Parameters
+    ----------
+    star_type : str or None
+        A classification from the star_types argument of secondary_stars_table(), such as
+        'Bound companion' or 'Background star'. None counts as unclassified, and so as bound.
+    """
+    if star_type is None:
+        return False
+    return any(word in str(star_type).lower() for word in ('background', 'unbound'))
+
+
+def secondary_stars_table(target_list, path, file_prefix, tic_list=None, host_list=None, outputpath='.',
+                          distance_source='median', distances_external=None,
+                          angular_separations=None, star_types=None,
+                          sep_tol=0.1, pa_tol=5.0, dmag_tol=0.05, max_stars_per_table=5):
+    '''
+    Generates a table of the secondary stars in a set of EXOFASTv2 fits, with one column per
+    secondary star. Angular separations are taken from the stellar companions reported on ExoFOP,
+    projected separations are calculated from those separations and the distance to the system, and
+    the magnitudes and AO/speckle contrasts are collected from the EXOFASTv2 SED files.
+
+    Secondary stars are identified by the star index in the final column of the SED file: an index
+    of '1' marks a magnitude belonging to star 1, and an index of '1-0' marks a contrast between
+    star 1 and the target star. Each secondary star is matched to an ExoFOP companion by comparing
+    its contrasts against the magnitude differences reported there, since both come from the same
+    imaging observations.
+
+    Every input list holds one entry per secondary star, so a host with two secondary stars is
+    listed twice. Secondary stars that share a file prefix are taken in the order they appear in
+    the SED file, meaning the first is star 1, the second is star 2, and so on.
+
+    Parameters
+    -----------
+    target_list: an array of strings containing the name of each secondary star. Ex: ['TOI-3988 B', 'TIC 123456789'],
+        where a bound companion is nominally named after its host and an unbound background star is named by its TIC ID
+    path: path of EXOFASTv2 output files
+    file_prefix: an array of strings containing the file prefix used in the EXOFASTv2 fit of each secondary star's host
+    tic_list: optional array of the TIC IDs of the hosts, used to look up their companions on ExoFOP. If None, the file
+        prefixes are used, since fits are usually named after the TIC ID of the host
+    host_list: optional array of the names of the hosts. If given, they are written in a 'Planet Host' row beneath the star
+        names and the classification row
+    outputpath: the folder in which the table should be generated. Current working directory by default
+    distance_source: accepts 'median' to use the distance from the EXOFASTv2 fit, 'gaia' to invert the Gaia DR3 parallax,
+        or 'external' to provide distances directly
+    distances_external: N by 2 array containing the distance in pc (first column) and its uncertainty (second column) for
+        each secondary star, used when distance_source='external'
+    angular_separations: optional dict of manual angular separations, in arcsec, used in place of the ExoFOP values. Keys are
+        the names in target_list, and values may be a separation or a (separation, uncertainty) pair
+    star_types: optional dict of classifications describing what each secondary star is, such as 'Bound companion' or
+        'Background star'. Keys are the names in target_list. The classification row is only written if at least one
+        secondary star has been classified. A classification naming the star as a background or unbound star suppresses
+        its projected separation, since such a star does not share the distance of the system
+    sep_tol: separation tolerance, in arcsec, within which two ExoFOP detections are treated as the same companion
+    pa_tol: position angle tolerance, in degrees, within which two ExoFOP detections are treated as the same companion
+    dmag_tol: tolerance, in magnitudes, for matching an SED contrast to an ExoFOP magnitude difference
+    max_stars_per_table: the maximum number of secondary stars shown in a single table. If the number of secondary stars exceeds
+        this value, the stars are split across multiple secondary_stars_table .tex files. Every table after the first is captioned
+        "\\textit{(Continued)}" and every table except the last gets "\\addtocounter{table}{-1}" so that all pieces share one table
+        number. The \\begin{minipage} notes block is only written in the last table. Set to None (or 0) to force a single table.
+    '''
+
+    # Setting up to save the table as a .tex file
+
+    if os.path.exists(outputpath) == False:
+        os.mkdir(outputpath)
+
+    # Falling back on the file prefixes for the TIC IDs, since fits are usually named after the TIC ID of the host
+
+    if tic_list is None:
+        if all(str(prefix).strip().isdigit() for prefix in file_prefix):
+            tic_list = [str(prefix).strip() for prefix in file_prefix]
+        else:
+            raise ValueError('tic_list is needed when the file prefixes are not the TIC IDs of the hosts.')
+
+    # initializing rows
+    sep_arr = [r'$\rho$ & Angular separation ($\arcsec$) ']
+    projsep_arr = [r'$\rho_{\rm proj}$ & Projected separation (AU) ']
+    gaia_g_arr = [r'${\rm G}$ & Gaia $G$ mag. ']
+    gaia_bp_arr = [r'$G_{\rm BP}$ & Gaia $G_{\rm BP}$ mag. ']
+    gaia_rp_arr = [r'$G_{\rm RP}$ & Gaia $G_{\rm RP}$ mag. ']
+    contrast_arrs = {
+        'I': [r'$\Delta I$ & $I$-band contrast (mag) '],
+        'J': [r'$\Delta J$ & $J$-band contrast (mag) '],
+        'H': [r'$\Delta H$ & $H$-band contrast (mag) '],
+        'K': [r'$\Delta K$ & $K$-band contrast (mag) '],
+    }
+
+    star_labels = [] # the column headers, one per secondary star
+    host_labels = [] # the host of each secondary star, so the columns can be traced back to a system
+    type_labels = [] # what each secondary star is, if it has been classified
+
+    # a host with more than one secondary star appears more than once, so its files are only read,
+    # and its ExoFOP page only queried, the first time it comes up
+    sed_cache = {}
+    median_cache = {}
+    parallax_cache = {}
+    companion_cache = {}
+
+    for i in range(len(target_list)):
+        label = target_list[i]
+        prefix = file_prefix[i]
+        tic = str(tic_list[i])
+
+        # collecting the magnitudes of every star in the fit
+        if prefix not in sed_cache:
+            sed_cache[prefix] = parse_sed_stars(path + prefix + '.sed')
+        stars = sed_cache[prefix]
+        secondary_indices = sorted(index for index in stars if index > 0)
+
+        # secondary stars that share a file prefix are taken in the order they are listed in target_list
+        occurrence = list(file_prefix[:i]).count(prefix)
+        if len(secondary_indices) == 0:
+            warnings.warn(f'There are no secondary stars in the SED file of {prefix}. Skipping {label}.')
+            continue
+        if occurrence >= len(secondary_indices):
+            warnings.warn(f'More secondary stars are listed for {prefix} than its SED file holds. Skipping {label}.')
+            continue
+        star = secondary_indices[occurrence]
+        mags = stars[star]['mags']
+        deltamags = stars[star]['deltamags']
+
+        star_labels.append(label)
+        host_labels.append(str(host_list[i]) if host_list is not None else '---')
+
+        # what the secondary star is, e.g. a bound companion or an unrelated background star
+        star_type = star_types.get(label) if star_types else None
+        type_labels.append(str(star_type) if star_type is not None else '---')
+        unbound = _is_unbound(star_type)
+
+        # collecting the distance, which turns the angular separation into a projected separation
+        distance = distance_up_err = distance_low_err = None
+        if unbound:
+            pass # an unbound star lies at its own distance, so it is given no projected separation
+        elif distance_source == 'median':
+            if prefix not in median_cache:
+                median_cache[prefix] = grab_medians(path=path, file_prefix=prefix)
+            medians = median_cache[prefix]
+            if medians.parname.isin(['distance_0']).any():
+                distance = float(medians.median_value[medians.parname == 'distance_0'].iloc[0])
+                distance_up_err = float(medians.upper_error[medians.parname == 'distance_0'].iloc[0])
+                distance_low_err = float(medians.lower_error[medians.parname == 'distance_0'].iloc[0])
+            else:
+                warnings.warn(f'There is no distance in the median table of {prefix}. The projected separation of {label} will be omitted.')
+        elif distance_source == 'gaia':
+            if tic not in parallax_cache:
+                vgaia = Vizier(columns=['_r', 'Plx', 'e_Plx'], catalog='I/355/gaiadr3')
+                data_gaia = vgaia.query_region('TIC ' + tic, radius=Angle(6, "arcsec"))
+                data_gaia = data_gaia[0]
+                data_gaia.sort('_r') # sort by distance from the target star
+                parallax_cache[tic] = (float(data_gaia['Plx'][0]), float(data_gaia['e_Plx'][0]))
+            parallax, parallax_err = parallax_cache[tic]
+            distance = 1000 / parallax
+            distance_up_err = distance_low_err = distance * parallax_err / parallax
+        elif distance_source == 'external':
+            distance = float(distances_external[i][0])
+            distance_up_err = distance_low_err = float(distances_external[i][1])
+
+        # collecting the companions that ExoFOP reports for the host
+        if tic not in companion_cache:
+            try:
+                detections = get_stellar_companions(tic)
+            except Exception as e:
+                warnings.warn(f'Could not fetch the ExoFOP companions of TIC {tic}: {e}')
+                detections = []
+            companion_cache[tic] = _group_companion_detections(detections, sep_tol=sep_tol, pa_tol=pa_tol)
+        groups = companion_cache[tic]
+
+        # the angular separation, either provided by hand or matched to an ExoFOP companion
+        sep = sep_err = None
+        manual = angular_separations.get(label) if angular_separations else None
+        if manual is not None:
+            if np.ndim(manual) == 0:
+                sep, sep_err = float(manual), None
+            else:
+                sep, sep_err = float(manual[0]), float(manual[1])
+        elif len(groups) > 0:
+            group, matches, ambiguous = _match_companion_group(groups, deltamags, dmag_tol=dmag_tol)
+            if group is None:
+                warnings.warn(f'Could not match {label} to an ExoFOP companion. Its separation will be omitted.')
+            elif ambiguous:
+                warnings.warn(f'{label} matches more than one ExoFOP companion equally well. Its separation will be omitted.')
+            else:
+                sep, sep_err = _companion_separation(matches)
+        else:
+            warnings.warn(f'ExoFOP lists no companions for TIC {tic}. The separation of {label} will be omitted.')
+
+        gen_secondary_str(sep_arr, sep, sep_err)
+
+        # the projected separation, in AU, from the angular separation and the distance
+        if unbound or (sep is None) or (distance is None):
+            gen_secondary_str(projsep_arr, None)
+        else:
+            projsep = sep * distance
+            # add the fractional uncertainties of the separation and the distance in quadrature
+            frac_sep = (sep_err / sep) if sep_err else 0.0
+            projsep_up_err = projsep * np.sqrt(frac_sep**2 + (distance_up_err / distance)**2)
+            projsep_low_err = projsep * np.sqrt(frac_sep**2 + (distance_low_err / distance)**2)
+            gen_secondary_str(projsep_arr, projsep, projsep_up_err, projsep_low_err)
+
+        # the Gaia magnitudes of the secondary star itself
+        for band, array in (('G', gaia_g_arr), ('BP', gaia_bp_arr), ('RP', gaia_rp_arr)):
+            value = error = None
+            for bandname in SECONDARY_GAIA_BANDS[band]:
+                if bandname in mags:
+                    value, error = mags[bandname]
+                    break
+            gen_secondary_str(array, value, error)
+
+        # the AO/speckle contrasts between the secondary star and the target star
+        for band, array in contrast_arrs.items():
+            value = error = None
+            for bandname in SECONDARY_CONTRAST_BANDS[band]:
+                if bandname in deltamags:
+                    value, error = deltamags[bandname]
+                    break
+            gen_secondary_str(array, value, error)
+
+    n_stars = len(star_labels)
+    if n_stars == 0:
+        warnings.warn('No secondary stars were found for any target. No table was generated.')
+        return
+
+    hosts_named = any(host != '---' for host in host_labels)
+    classified = any(star_type != '---' for star_type in type_labels)
+
+    # only keep the contrast rows that at least one secondary star has a measurement in
+    contrast_rows = [array for array in contrast_arrs.values()
+                     if any(cell != '& --- ' for cell in array[1:])]
+
+    # Generating the preamble
+
+    preamble = (r'\providecommand{\tess}{\textit{TESS}\xspace}' + '\n')
+
+    notes = (r'\vspace{2mm}' + '\n' +
+             r'\begin{minipage}{\textwidth}' + '\n' +
+             r'\footnotesize' + '\n' +
+             r'\textbf{Notes:}' + '\n' +
+             r'Angular separations and contrasts are reported on ExoFOP. Where a companion was detected in ' +
+             r'several filters, the separations are averaged and their scatter is included in the uncertainty.\\' + '\n' +
+             r'\end{minipage}' + '\n')
+
+    # Deciding how to split the secondary stars across tables
+    if not max_stars_per_table or max_stars_per_table >= n_stars:
+        chunk_size = n_stars
+    else:
+        chunk_size = int(max_stars_per_table)
+    n_chunks = max(1, int(np.ceil(n_stars / chunk_size)))
+
+    # Deriving the output filename(s). The first table keeps the classic 'secondary_stars_table.tex'
+    # name (bumping a numeric suffix if it already exists); continuation tables append '_2', '_3', ...
+    first_name = 'secondary_stars_table.tex'
+    suffix = 2
+    while os.path.exists(f'{outputpath}/{first_name}'):
+        first_name = f'secondary_stars_table_{suffix}.tex'
+        suffix += 1
+    stem = first_name[:-len('.tex')]
+    filenames = [first_name] + [f'{stem}_{k}.tex' for k in range(2, n_chunks + 1)]
+    print('Saving this table as ' + ', '.join(filenames) + '...')
+
+    def _row_slice(arr, sl):
+        '''Return a table row for the secondary stars in slice `sl`: the label cell(s) followed by the sliced star cells.'''
+        return arr[:1] + arr[1:][sl]
+
+    def _write_chunk(fname, sl, is_first, is_last):
+        chunk_labels = star_labels[sl]
+        n_chunk = len(chunk_labels)
+        colstring = 'c' * n_chunk # one column per secondary star, after the two label columns
+        namestring = ''.join(' & ' + label for label in chunk_labels)
+        hoststring = ''.join(' & ' + host for host in host_labels[sl])
+        typestring = ''.join(' & ' + star_type for star_type in type_labels[sl])
+
+        caption = (r'\caption{Properties of the Secondary Stars}' if is_first
+                   else r'\caption{\textit{(Continued)}}')
+
+        with open(f'{outputpath}/{fname}', 'w') as fout:
+            fout.write(preamble)
+            fout.write(r'\begin{table*}' + '\n' +
+                       r'\centering' + '\n' +
+                       caption + '\n')
+            if is_first:
+                fout.write(r'\label{tab:secondary}' + '\n')
+            fout.write(r'\scriptsize' + '\n')
+
+            fout.write(r'\begin{tabular}{l l' + colstring + '}' + '\n' +
+                       r'\hline' + '\n' +
+                       r'& ' + namestring + r'\\' + '\n')
+            # the classification is written first, so that the planet host is not read as one
+            if classified:
+                fout.write(r'& Classification' + typestring + r'\\' + '\n')
+            if hosts_named:
+                fout.write(r'& Planet Host' + hoststring + r'\\' + '\n')
+            fout.write(r'\hline' + '\n')
+
+            write(_row_slice(sep_arr, sl), fout)
+            write(_row_slice(projsep_arr, sl), fout)
+            write(_row_slice(gaia_g_arr, sl), fout)
+            write(_row_slice(gaia_bp_arr, sl), fout)
+            write(_row_slice(gaia_rp_arr, sl), fout)
+            for array in contrast_rows:
+                write(_row_slice(array, sl), fout)
+
+            fout.write(r'\hline' + '\n' +
+                       r'\end{tabular}' + '\n')
+            if is_last:
+                # the minipage notes block is only used in the final table
+                fout.write(notes)
+            fout.write(r'\end{table*}')
+            if not is_last:
+                # keep every piece except the last on the same table number
+                fout.write('\n' + r'\addtocounter{table}{-1}')
+
+    for k, fname in enumerate(filenames):
+        sl = slice(k * chunk_size, min((k + 1) * chunk_size, n_stars))
+        _write_chunk(fname, sl, is_first=(k == 0), is_last=(k == n_chunks - 1))
