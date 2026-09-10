@@ -787,7 +787,7 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     default_parameters = [
         'mstar', 'rstar', 'lstar', 'rhostar', 'logg', 'teff', 'feh', 'initfeh', 'age', 'eep', 'Av',
         'distance', 'Period', 'rp', 'mp', 'tc', 't0', 'a', 'ideg', 'e', 'omegadeg', 'teq', 'tcirc',
-        'k', 'p', 'ar', 'depth_TESS', 'tau', 't14', 'b', 'rhop', 'loggp', 'q', 'dr'
+        'k', 'slope', 'p', 'ar', 'depth_TESS', 'tau', 't14', 'b', 'rhop', 'loggp', 'q', 'dr'
     ]
 
     if parameters is None:
@@ -828,6 +828,7 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     teqs=[r'$\teq$ & Equilibrium temperature (K) ']
     tcircs=[r'$\tau_{\rm circ}$ & Tidal circularization timescale (Gyr) ']
     ks=[r'$K$ & RV semi-amplitude (m/s) ']
+    slopes=[r'$\dot{\gamma}$ & RV slope (m/s/day) ']
     ps=[r'$R_{\rm P}/R_*$ & Radius of planet in stellar radii  ']
     ars=[r'$a/R_*$ & Semi-major axis in stellar radii  ']
     deltas=[r'$\delta$ & $\left(R_{\rm P}/R_*\right)^2$ ']
@@ -899,6 +900,7 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
         ('teq', 'teq', teqs),
         ('tcirc', 'tcirc', tcircs),
         ('k', 'k', ks),
+        ('slope', 'slope', slopes),
         ('p', 'p', ps),
         ('ar', 'ar', ars),
         ('delta', 'delta', deltas),
