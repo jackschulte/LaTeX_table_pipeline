@@ -220,7 +220,7 @@ def grab_priors(file_prefix, path):
     priors['meanvalue'] = priors['meanvalue'].astype(float) # to ensure that all mean values are floats
     return priors
 
-def make_median_string(medians, param, array):
+def make_median_string(medians, param, array, star_index=0):
     '''
     Turns median values into strings containing LaTeX, ready to be entered into the median table.
 
@@ -229,11 +229,13 @@ def make_median_string(medians, param, array):
     medians: Pandas DataFrame containing the median values obtained using the grab_medians function.
     param: the parameter to generate a string for
     array: the array corresponding to the table row that the parameter should be appended to
+    star_index: the index of the star the parameter belongs to, matching the suffix EXOFASTv2 writes in the
+        median file. 0 is the target star (teff_0), 1 is the first secondary star (teff_1), and so on.
 
     Exactly one cell string is appended per call so that the row can be sliced by target index
     (e.g. when splitting a long target list across multiple tables).
     '''
-    param = param+'_0'
+    param = f'{param}_{star_index}'
 
     if medians.parname.isin([param]).any() == True:
         val = medians.median_value[medians.parname == param].iloc[0]
@@ -296,7 +298,7 @@ def write(param_arr,file):
     file.write(r'\\'+'\n')
 
 def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='gaia', vsini_external=None, tres_username=None, tres_password=None,
-              add_source_column=False, grab_mags_from_sedfile=True, max_targets_per_table=5):
+              add_source_column=False, grab_mags_from_sedfile=True, max_targets_per_table=5, MNRAS=False):
     '''
     Generates a 'literature' table, using photometric and astrometric parameters from Gaia, 2MASS, and WISE. Optionally
     grabs vsini measurements from TRES. WARNING: Collecting TRES vsini measurements will increase runtime by ~4 min.
@@ -317,6 +319,9 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
         targets are split across multiple lit_table.tex files. Every table after the first is captioned "\\textit{(Continued)}"
         and every table except the last gets "\\addtocounter{table}{-1}" so that all pieces share one table number. The
         \\begin{minipage} notes block is only written in the last table. Set to None (or 0) to force a single table.
+    MNRAS: set to True to use the MNRAS class's \\contcaption for the continuation tables, in place of the
+        "\\caption{\\textit{(Continued)}}" and "\\addtocounter{table}{-1}" pair written otherwise. \\contcaption
+        supplies the continuation wording and holds the table number itself, so neither is needed alongside it.
     '''
 
     # Setting up to save the table as a .tex file
@@ -389,6 +394,8 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
     tycho_id_list=[]
     twomass_id_list=[]
     gaia_id_list=[]
+
+    wise4_targets = 0 # how many targets have a WISE4 magnitude; the row is dropped if none do
 
     # query for data and build rows
     for i in range(len(TIC_IDs)):
@@ -466,8 +473,6 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
 
         # Grabbing the used magnitudes from SED files
         if grab_mags_from_sedfile == True:
-            wise4count = 0 # WISE4 magnitudes are often not reported or used for any targets. This variable keeps track of the WISE4 mags in fits
-
             columns = ['bandname', 'magnitude', 'used_errors', 'catalog_errors', 'star_index']
             sedtable = pd.read_csv(path + file_prefix[i] + '.sed', sep=r'\s+', skiprows=1, header=None, names=columns, comment='#', dtype=str)
             if sedtable.bandname.isin(['Gaia_G_EDR3']).any():
@@ -501,7 +506,6 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
             if sedtable.bandname.isin(['WISE4']).any():
                 wise4 = sedtable.magnitude[sedtable.bandname == 'WISE4'].iloc[0]
                 wise4_err = sedtable.used_errors[sedtable.bandname == 'WISE4'].iloc[0]
-                wise4count += 1
             else:
                 wise4 = None
                 wise4_err = None
@@ -551,8 +555,11 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
         gen_lit_str(wise1_arr, round(float(wise1), 3), round(float(wise1_err), 3))
         gen_lit_str(wise2_arr, round(float(wise2), 3), round(float(wise2_err), 3))
         gen_lit_str(wise3_arr, round(float(wise3), 3), round(float(wise3_err), 3))
-        if wise4count > 0:
+        if (wise4 is None) or isinstance(wise4, np.ma.core.MaskedConstant):
+            gen_lit_str(wise4_arr, None) # a filler cell, so the row stays as wide as the others
+        else:
             gen_lit_str(wise4_arr, round(float(wise4), 3), round(float(wise4_err), 3))
+            wise4_targets += 1
         gen_lit_str(pmra_arr, round(float(pmra), 3), round(float(pmra_err), 3))
         gen_lit_str(pmdec_arr, round(float(pmdec), 3), round(float(pmdec_err), 3))
         gen_lit_str(parallax_arr, round(float(parallax), 4), round(float(parallax_err), 4))
@@ -581,7 +588,7 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
         add_source(wise1_arr, 5) # 5 corresponds to WISE
         add_source(wise2_arr, 5)
         add_source(wise3_arr, 5)
-        if wise4count > 0:
+        if wise4_targets > 0:
             add_source(wise4_arr, 5)
 
     # Generating the preamble
@@ -646,15 +653,19 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
     def _write_chunk(fname, sl, is_first, is_last):
         chunk_targets = list(target_list[sl])
         n_chunk = len(chunk_targets)
-        colstring = 'cc' + 'c' * n_chunk
+        colstring = 'c' * n_chunk + ('c' if add_source_column else '')
         namestring = ''.join(' & ' + t for t in chunk_targets)
         tic_id_str = ''.join(tic_id_list[sl])
         tycho_id_str = ''.join(tycho_id_list[sl])
         twomass_id_str = ''.join(twomass_id_list[sl])
         gaia_id_str = ''.join(gaia_id_list[sl])
 
-        caption = (r'\caption{Measured Properties from Literature}' if is_first
-                   else r'\caption{\textit{(Continued)}}')
+        if is_first:
+            caption = r'\caption{Measured Properties from Literature}'
+        elif MNRAS:
+            caption = r'\contcaption{}'
+        else:
+            caption = r'\caption{\textit{(Continued)}}'
 
         with open(f'{outputpath}/{fname}', 'w') as fout:
             fout.write(preamble)
@@ -670,20 +681,20 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
                     r'\hline' + '\n' +
                     r'& ' + namestring + r' & Source \\' +'\n'+
                     r'\multicolumn{' + str(n_chunk + 3) + r'}{l}{\textbf{Other identifiers}:} \\' + '\n' +
-                    r'& \tess Input Catalog' + tic_id_str + r'\\' + '\n' +
+                    r'& \tess Input Catalog' + tic_id_str + r' & \\' + '\n' +
                     r'& TYCHO-2' + tycho_id_str + r' & \\'  + '\n' +
                     r'& 2MASS' + twomass_id_str + r' & \\' + '\n' +
                     r'& Gaia DR3' + gaia_id_str + r' & \\' + '\n' +
                     r'\hline' + '\n' +
                     r'\multicolumn{' + str(n_chunk + 3) + r'}{l}{\textbf{Astrometric Parameters}:} \\' + '\n')
             else:
-                fout.write(r'\begin{tabular}{l l' + colstring + '}'+'\n'+
+                fout.write(r'\begin{tabular}{ll' + colstring + '}'+'\n'+
                     r'\hline' + '\n' +
                     r'& ' + namestring + r'\\' +'\n'+
                     r'\multicolumn{' + str(n_chunk + 2) + r'}{l}{\textbf{Other identifiers}:} \\' + '\n' +
-                    r'& \tess Input Catalog' + tic_id_str + r' & \\' + '\n' +
-                    r'& TYCHO-2' + tycho_id_str + r' & \\'  + '\n' +
-                    r'& 2MASS' + twomass_id_str + r' & \\' + '\n' +
+                    r'& \tess Input Catalog' + tic_id_str + r'\\' + '\n' +
+                    r'& TYCHO-2' + tycho_id_str + r'\\'  + '\n' +
+                    r'& 2MASS' + twomass_id_str + r'\\' + '\n' +
                     r'\hline' + '\n' +
                     r'\multicolumn{' + str(n_chunk + 2) + r'}{l}{\textbf{Astrometric Parameters}:} \\' + '\n')
 
@@ -704,10 +715,7 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
             write(_row_slice(wise1_arr, sl), fout)
             write(_row_slice(wise2_arr, sl), fout)
             write(_row_slice(wise3_arr, sl), fout)
-            if add_source_column == True:
-                if wise4count > 0:
-                    write(_row_slice(wise4_arr, sl), fout)
-            else:
+            if wise4_targets > 0:
                 write(_row_slice(wise4_arr, sl), fout)
 
             fout.write(r'\hline' + '\n' +
@@ -717,8 +725,8 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
                 # the minipage notes block is only used in the final table
                 fout.write(notes)
             fout.write(r'\end{table*}')
-            if not is_last:
-                # keep every piece except the last on the same table number
+            if not is_last and not MNRAS:
+                # keep every piece except the last on the same table number, which \contcaption does itself
                 fout.write('\n' + r'\addtocounter{table}{-1}')
 
     for k, fname in enumerate(filenames):
@@ -728,7 +736,8 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
 
 
 def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False, parameters=None,
-              probabilities=None, max_targets_per_table=5):
+              probabilities=None, max_targets_per_table=5, secondary_stars=False, host_list=None,
+              star_types=None, MNRAS=False):
     '''
     Generates a median table given the path to EXOFASTv2 output files.
 
@@ -755,7 +764,34 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
         targets are split across multiple median_table .tex files. Every table after the first is captioned "\\textit{(Continued)}"
         and every table except the last gets "\\addtocounter{table}{-1}" so that all pieces share one table number. The
         \\begin{flushleft} notes block is only written in the last table. Set to None (or 0) to force a single table.
+    MNRAS: set to True to use the MNRAS class's \\contcaption for the continuation tables, in place of the
+        "\\caption{\\textit{(Continued)}}" and "\\addtocounter{table}{-1}" pair written otherwise. \\contcaption
+        supplies the continuation wording and holds the table number itself, so neither is needed alongside it.
+    secondary_stars: set to True to build a table of the median stellar parameters of the secondary stars instead of the target
+        stars. The values are read from the same median files, off the parameters EXOFASTv2 writes with a star index above 0
+        (teff_1, feh_1, ...), so target_list holds the name of each secondary star while file_prefix_list holds the fit of its
+        host, as in secondary_stars_table(). Only stellar parameters are written, since the planetary parameters of the fit
+        belong to the target star, and the priors block is replaced by the classification and planet host rows described under
+        star_types and host_list. Hosts whose fit has no secondary star are dropped from the table, and their names are
+        printed. The output is named secondary_median_table.tex. A host with more than one secondary star is listed once per
+        star, and the repeats take the star indices in the order they appear, so the first is star 1 and the second is star 2.
+        Passing an integer instead of True reads that star index for every column (secondary_stars=2 reads teff_2, feh_2, ...).
+        The symbols of the initial metallicity, age, V-band extinction and distance rows are marked with a superscript
+        asterisk, and a note explaining that a bound companion takes those four from the primary star is written beneath the
+        last table. The note is left out if none of the four are in the table.
+    host_list: optional array of the names of the hosts, one per entry of target_list. If given, they are written in a 'Planet
+        Host' row beneath the star names. Only used when secondary_stars is set.
+    star_types: optional dict of classifications describing what each secondary star is, such as 'Bound companion' or
+        'Background star'. Keys are the names in target_list. The classification row is only written if at least one secondary
+        star has been classified. Only used when secondary_stars is set.
     '''
+
+    # `secondary_stars` picks which star of the fit the table is built from: False keeps the target star,
+    # True gives each column the next secondary star of its host, and an integer fixes the star index
+    secondary = bool(secondary_stars)
+    fixed_star_index = int(secondary_stars) if (secondary and secondary_stars is not True) else None
+    if fixed_star_index is not None and fixed_star_index < 1:
+        raise ValueError(f'secondary_stars must be True, False, or a star index of 1 or more, not {secondary_stars!r}.')
 
     def _normalize_param_name(name):
         return re.sub(r'[^a-z0-9]', '', str(name).lower())
@@ -781,6 +817,9 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
 
     if probabilities is not None and len(probabilities) != len(file_prefix_list):
         raise ValueError(f'probabilities has {len(probabilities)} entries but file_prefix_list has {len(file_prefix_list)}; '
+                         'the two must line up index for index.')
+    if host_list is not None and len(host_list) != len(file_prefix_list):
+        raise ValueError(f'host_list has {len(host_list)} entries but file_prefix_list has {len(file_prefix_list)}; '
                          'the two must line up index for index.')
     probability_cells = [_format_probability(p) for p in probabilities] if probabilities is not None else None
 
@@ -813,6 +852,21 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     errscales=[r'$\sigma_{SED}$ & SED photometry error scaling ']
     plaxes=[r'$\varpi$ & Parallax (mas) ']
     dists=[r'$d$ & Distance (pc) ']
+
+    # a bound companion takes these four from the primary star rather than being fit for them, so in a
+    # secondary-star table their symbols carry a superscript asterisk that the note beneath the table
+    # explains. The marked symbol is written out for each one, since where the asterisk goes depends on the
+    # sub- and superscripts the symbol already carries.
+    fixed_to_primary = ('initfeh', 'age', 'Av', 'distance')
+    if secondary:
+        for labels, marked_symbol in ((initfehs, r'$[{\rm Fe/H}]_{0}^{*}$'),
+                                      (ages, r'Age$^{*}$'),
+                                      (avs, r'$A_V^{*}$'),
+                                      (dists, r'$d^{*}$')):
+            _, separator, description = labels[0].partition(' & ')
+            labels[0] = marked_symbol + separator + description
+    show_secondary_note = secondary and any(_normalize_param_name(name) in selected_parameters
+                                            for name in fixed_to_primary)
 
     periods=[r'$P$ & Period (days) ']
     rps=[r'$R_{\rm P}$ & Radius (\rj) ']
@@ -937,12 +991,79 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
         ('psg', 'psg', psgs),
     ]
 
-    parameter_specs = stellar_parameter_specs + planetary_parameter_specs
+    # the planetary parameters of a fit belong to the target star, so a secondary-star table holds
+    # nothing but the stellar parameters
+    parameter_specs = stellar_parameter_specs if secondary else stellar_parameter_specs + planetary_parameter_specs
 
     # Setting up to save the table as a .tex file
 
     if os.path.exists(outputpath) == False:
         os.mkdir(outputpath)
+
+    # Reading the median files up front, so that a secondary-star table can work out which star each column
+    # holds, and drop the hosts that have no secondary star, before the columns are laid out
+    median_tables = [grab_medians(path=path, file_prefix=prefix, bimodal=bimodal) for prefix in file_prefix_list]
+    star_indices = [0] * len(file_prefix_list) # the star of its fit that each column is read from
+
+    if secondary:
+        # a star suffix on its own does not mark a secondary star, since EXOFASTv2 also indexes the transit,
+        # telescope and limb darkening parameters (dilute_1, gamma_1 and u1_1 all turn up in a fit of a single
+        # star), so only the suffixes carried by one of the stellar parameters are counted
+        stellar_keys = {median_key for _, median_key, _ in stellar_parameter_specs}
+
+        def _secondary_indices(medians):
+            '''Returns the sorted star indices of the secondary stars held in a median table.'''
+            found = set()
+            for parname in medians.parname.astype(str):
+                key, _, index = parname.rpartition('_')
+                if key in stellar_keys and index.isdigit() and int(index) > 0:
+                    found.add(int(index))
+            return sorted(found)
+
+        kept = []
+        dropped = []
+        star_indices = []
+        for ii, prefix in enumerate(file_prefix_list):
+            available = _secondary_indices(median_tables[ii])
+            if fixed_star_index is not None:
+                index = fixed_star_index if fixed_star_index in available else None
+            else:
+                # a host with more than one secondary star is listed once per star, and the repeats take the
+                # star indices in the order they appear
+                occurrence = list(file_prefix_list[:ii]).count(prefix)
+                index = available[occurrence] if occurrence < len(available) else None
+            if index is None:
+                dropped.append(str(target_list[ii]))
+            else:
+                kept.append(ii)
+                star_indices.append(index)
+
+        missing = f'star {fixed_star_index}' if fixed_star_index is not None else 'secondary star'
+        if dropped:
+            print(f'No {missing} was found in the fit of ' + ', '.join(dropped) +
+                  '; leaving them out of the table...')
+        if not kept:
+            raise ValueError(f'None of the given fits have a {missing}, so there is no table to write. Median '
+                             'files hold the secondary stars as teff_1, feh_1, and so on.')
+        target_list = [target_list[ii] for ii in kept]
+        file_prefix_list = [file_prefix_list[ii] for ii in kept]
+        median_tables = [median_tables[ii] for ii in kept]
+        if host_list is not None:
+            host_list = [host_list[ii] for ii in kept]
+        if probability_cells is not None:
+            probability_cells = [probability_cells[ii] for ii in kept]
+
+    # The rows that identify each secondary star, as in secondary_stars_table(): what the star is, and which
+    # planet host it belongs to. Neither row is written unless at least one column has something to put in it.
+    host_labels = []
+    type_labels = []
+    if secondary:
+        for ii, name in enumerate(target_list):
+            host_labels.append(str(host_list[ii]) if host_list is not None else '---')
+            star_type = star_types.get(str(name)) if star_types else None
+            type_labels.append(str(star_type) if star_type is not None else '---')
+    hosts_named = any(host != '---' for host in host_labels)
+    classified = any(star_type != '---' for star_type in type_labels)
 
     # Deciding how to split the targets across tables
     n_targets = len(target_list)
@@ -1020,9 +1141,9 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     n_chunks = len(chunks)
 
     # Deriving the output filename(s). The first table keeps the classic 'median_table.tex' name
-    # ('bimodal_median_table.tex' for a bimodal table), bumping a numeric suffix if it already exists;
-    # continuation tables append '_2', '_3', ...
-    base_name = 'bimodal_median_table' if bimodal else 'median_table'
+    # ('bimodal_median_table.tex' for a bimodal table, 'secondary_median_table.tex' for a secondary-star
+    # table), bumping a numeric suffix if it already exists; continuation tables append '_2', '_3', ...
+    base_name = ('bimodal_' if bimodal else '') + ('secondary_' if secondary else '') + 'median_table'
     first_name = f'{base_name}.tex'
     suffix = 2
     while os.path.exists(f'{outputpath}/{first_name}'):
@@ -1033,18 +1154,19 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     print('Saving this table as ' + ', '.join(filenames) + '...')
 
     for ii in range(len(target_list)):
-        medians = grab_medians(path=path, file_prefix=file_prefix_list[ii], bimodal=bimodal)
+        medians = median_tables[ii]
 
         for param_name, median_key, labels in parameter_specs:
             if _normalize_param_name(param_name) in selected_parameters or _normalize_param_name(median_key) in selected_parameters:
-                make_median_string(medians, median_key, labels)
+                make_median_string(medians, median_key, labels, star_index=star_indices[ii])
 
     # Collecting priors to put at the top of the table (one ' & ...' entry per target so they can be sliced)
     parallax_prior = [] # initializing lists
     metallicity_prior = []
     extinction_prior = []
     dilution_prior = []
-    show_priors = (bimodal == False) # the prior files are only read for a normal (non-split) fit
+    # the prior files are only read for a normal (non-split) fit of the target star
+    show_priors = (bimodal == False) and (secondary == False)
     if show_priors:
         dilute_bool = np.zeros_like(target_list) # to keep track of which targets were fit for dilution
 
@@ -1107,16 +1229,25 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     def _write_chunk(fname, chunk_groups, is_first, is_last):
         idx = [i for group in chunk_groups for i in group]
         n_chunk = len(idx)
-        colstring = 'lc' + 'c' * n_chunk
+        colstring = 'c' * n_chunk
         if bimodal:
             # one system name per group, spanning that system's solution columns
             namestring = ''.join(r' & \multicolumn{' + str(len(group)) + r'}{c}{' + _system_name(group[0]) + r'}'
                                  for group in chunk_groups)
         else:
             namestring = ''.join(' & ' + str(target_list[i]) for i in idx)
-        title = (r'Median Values and 68\% Confidence Intervals for Solutions which are Bimodal in Mass' if bimodal
-                 else r'Median Values and 68\% Confidence Intervals for Fitted Stellar and Planetary Parameters')
-        caption = r'\caption{' + title + '}' if is_first else r'\caption{\textit{(Continued)}}'
+        if bimodal:
+            title = r'Median Values and 68\% Confidence Intervals for Solutions which are Bimodal in Mass'
+        elif secondary:
+            title = r'Median Values and 68\% Confidence Intervals for the Fitted Stellar Parameters of Secondary Stars'
+        else:
+            title = r'Median Values and 68\% Confidence Intervals for Fitted Stellar and Planetary Parameters'
+        if is_first:
+            caption = r'\caption{' + title + '}'
+        elif MNRAS:
+            caption = r'\contcaption{}'
+        else:
+            caption = r'\caption{\textit{(Continued)}}'
 
         with open(f'{outputpath}/{fname}', 'w') as fout:
             fout.write(preamble)
@@ -1124,7 +1255,8 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
                        r'\centering' + '\n' +
                        caption + '\n')
             if is_first:
-                fout.write(r'\label{tab:' + ('bimodal' if bimodal else 'median') + '}' + '\n')
+                label = 'bimodal' if bimodal else ('secondarymedian' if secondary else 'median')
+                fout.write(r'\label{tab:' + label + '}' + '\n')
             fout.write(r'\scriptsize' + '\n' +
                        r'\begin{tabular}{ll' + colstring + '}'+'\n'+
                        r'\hline' + '\n' +
@@ -1132,6 +1264,11 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
             if bimodal:
                 # which solution each column holds, under the system name it belongs to
                 fout.write(r'& ' + ''.join(' & ' + _solution_label(i) for i in idx) + r'\\' + '\n')
+            if classified:
+                # what each secondary star is, written first so that the planet host is not read as one
+                fout.write(r'& Classification' + ''.join(' & ' + type_labels[i] for i in idx) + r'\\' + '\n')
+            if hosts_named:
+                fout.write(r'& Planet Host' + ''.join(' & ' + host_labels[i] for i in idx) + r'\\' + '\n')
             if probability_cells is not None:
                 # the probability of each solution goes on its own header line, under the solution name
                 fout.write(r'& ' + ''.join(' & ' + probability_cells[i] for i in idx) + r'\\' + '\n')
@@ -1150,10 +1287,12 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
                 if _normalize_param_name(param_name) in selected_parameters:
                     write(_row_slice(labels, idx), fout)
 
-            fout.write(r'\multicolumn{' + str(n_chunk + 2) + r'}{l}{\textbf{Planetary Parameters}:} \\' + '\n')
-            for param_name, median_key, labels in planetary_parameter_specs:
-                if _normalize_param_name(param_name) in selected_parameters:
-                    write(_row_slice(labels, idx), fout)
+            if not secondary:
+                # the planetary parameters of the fit belong to the target star, not to a secondary star
+                fout.write(r'\multicolumn{' + str(n_chunk + 2) + r'}{l}{\textbf{Planetary Parameters}:} \\' + '\n')
+                for param_name, median_key, labels in planetary_parameter_specs:
+                    if _normalize_param_name(param_name) in selected_parameters:
+                        write(_row_slice(labels, idx), fout)
 
             # conclude with the closing rules; the flushleft notes block is only used in the final table
             fout.write(r'\hline' + '\n' +
@@ -1162,9 +1301,13 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
                 fout.write(r'\begin{flushleft}' + '\n' +
                            r'\textbf{Notes:} The priors for each system are labeled as $\mathcal{G}$[mean, standard deviation] if they are Gaussian priors and $\mathcal{U}$[lower limit, upper limit] if they are uniform priors.' + '\n' +
                            r'\end{flushleft}' + '\n')
+            if is_last and show_secondary_note:
+                fout.write(r'\begin{flushleft}' + '\n' +
+                           r'\textbf{Note:} *When the secondary star is a bound companion, the initial metallicity, age, \textit{V}-band extinction, and distance are fixed to those of the primary star.' + '\n' +
+                           r'\end{flushleft}' + '\n')
             fout.write(r'\end{table*}')
-            if not is_last:
-                # keep every piece except the last on the same table number
+            if not is_last and not MNRAS:
+                # keep every piece except the last on the same table number, which \contcaption does itself
                 fout.write('\n' + r'\addtocounter{table}{-1}')
 
     for k, fname in enumerate(filenames):
@@ -1776,7 +1919,7 @@ def _is_unbound(star_type):
 def secondary_stars_table(target_list, path, file_prefix, tic_list=None, host_list=None, outputpath='.',
                           distance_source='median', distances_external=None,
                           angular_separations=None, star_types=None,
-                          sep_tol=0.1, pa_tol=5.0, dmag_tol=0.05, max_stars_per_table=5):
+                          sep_tol=0.1, pa_tol=5.0, dmag_tol=0.05, max_stars_per_table=5, MNRAS=False):
     '''
     Generates a table of the secondary stars in a set of EXOFASTv2 fits, with one column per
     secondary star. Angular separations are taken from the stellar companions reported on ExoFOP,
@@ -1821,6 +1964,9 @@ def secondary_stars_table(target_list, path, file_prefix, tic_list=None, host_li
         this value, the stars are split across multiple secondary_stars_table .tex files. Every table after the first is captioned
         "\\textit{(Continued)}" and every table except the last gets "\\addtocounter{table}{-1}" so that all pieces share one table
         number. The \\begin{minipage} notes block is only written in the last table. Set to None (or 0) to force a single table.
+    MNRAS: set to True to use the MNRAS class's \\contcaption for the continuation tables, in place of the
+        "\\caption{\\textit{(Continued)}}" and "\\addtocounter{table}{-1}" pair written otherwise. \\contcaption
+        supplies the continuation wording and holds the table number itself, so neither is needed alongside it.
     '''
 
     # Setting up to save the table as a .tex file
@@ -2033,8 +2179,12 @@ def secondary_stars_table(target_list, path, file_prefix, tic_list=None, host_li
         hoststring = ''.join(' & ' + host for host in host_labels[sl])
         typestring = ''.join(' & ' + star_type for star_type in type_labels[sl])
 
-        caption = (r'\caption{Observed Properties the Secondary Stars}' if is_first
-                   else r'\caption{\textit{(Continued)}}')
+        if is_first:
+            caption = r'\caption{Observed Properties the Secondary Stars}'
+        elif MNRAS:
+            caption = r'\contcaption{}'
+        else:
+            caption = r'\caption{\textit{(Continued)}}'
 
         with open(f'{outputpath}/{fname}', 'w') as fout:
             fout.write(preamble)
@@ -2042,7 +2192,7 @@ def secondary_stars_table(target_list, path, file_prefix, tic_list=None, host_li
                        r'\centering' + '\n' +
                        caption + '\n')
             if is_first:
-                fout.write(r'\label{tab:secondary}' + '\n')
+                fout.write(r'\label{tab:secondarylit}' + '\n')
             fout.write(r'\scriptsize' + '\n')
 
             fout.write(r'\begin{tabular}{l l' + colstring + '}' + '\n' +
@@ -2069,8 +2219,8 @@ def secondary_stars_table(target_list, path, file_prefix, tic_list=None, host_li
                 # the minipage notes block is only used in the final table
                 fout.write(notes)
             fout.write(r'\end{table*}')
-            if not is_last:
-                # keep every piece except the last on the same table number
+            if not is_last and not MNRAS:
+                # keep every piece except the last on the same table number, which \contcaption does itself
                 fout.write('\n' + r'\addtocounter{table}{-1}')
 
     for k, fname in enumerate(filenames):
