@@ -2033,7 +2033,7 @@ def secondary_stars_table(target_list, path, file_prefix, tic_list=None, host_li
         hoststring = ''.join(' & ' + host for host in host_labels[sl])
         typestring = ''.join(' & ' + star_type for star_type in type_labels[sl])
 
-        caption = (r'\caption{Properties of the Secondary Stars}' if is_first
+        caption = (r'\caption{Observed Properties the Secondary Stars}' if is_first
                    else r'\caption{\textit{(Continued)}}')
 
         with open(f'{outputpath}/{fname}', 'w') as fout:
