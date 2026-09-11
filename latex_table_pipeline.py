@@ -1451,7 +1451,8 @@ def generate_master_followup_table(tic_list, toi_list):
                                 'Filter', r'Pix. Scale ($\arcsec$/pix)', r'PSF FWHM ($\arcsec$)', r'Aper. Rad. ($\arcsec$)']]
     return master_df
 
-def convert_table_to_latex_and_save(df, filename, caption='Summary of Follow-up Observations', label='tab:followup'):
+def convert_table_to_latex_and_save(df, filename, caption='Summary of Follow-up Observations', label='tab:followup',
+                                    fontsize=None):
     """Convert a DataFrame to LaTeX format and save it to a file.
 
     Parameters
@@ -1464,11 +1465,17 @@ def convert_table_to_latex_and_save(df, filename, caption='Summary of Follow-up 
         The caption for the LaTeX table.
     label : str
         The label for the LaTeX table.
+    fontsize : str, optional
+        A LaTeX font size command, e.g. "\\scriptsize", written directly after \\onecolumn to
+        shrink the table. The size stays in effect until the document resets it.
     """
     latex_str = df.to_latex(index=False, escape=False, caption=caption, label=label, longtable=True)
 
     # required for longtable to work in a two-column document
-    latex_str = '\\onecolumn\n' + latex_str + '\n\\twocolumn'
+    preamble = '\\onecolumn\n'
+    if fontsize is not None:
+        preamble += fontsize + '\n'
+    latex_str = preamble + latex_str + '\n\\twocolumn'
     
     with open(filename, 'w') as f:
         f.write(latex_str)
@@ -1486,7 +1493,7 @@ def generate_followup_table(tic_list, toi_list, output_filename):
         The filename for the output LaTeX file.
     """
     master_df = generate_master_followup_table(tic_list, toi_list)
-    convert_table_to_latex_and_save(master_df, output_filename)
+    convert_table_to_latex_and_save(master_df, output_filename, fontsize=r'\scriptsize')
 
 def get_hri_table(tic_id):
     """Fetch the high-resolution imaging observations for a given TIC ID and return a cleaned DataFrame.
