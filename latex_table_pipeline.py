@@ -1443,15 +1443,15 @@ def generate_master_followup_table(tic_list, toi_list):
         # Add TIC and TOI ids to the first row for this target.
         df['TIC ID'] = tic_id.replace('TIC ', '')
         df.loc[1:, 'TIC ID'] = ''
-        df['TOI Number'] = toi_id
-        df.loc[1:, 'TOI Number'] = ''
+        df['TOI'] = toi_id
+        df.loc[1:, 'TOI'] = ''
 
         master_df = pd.concat([master_df, df], ignore_index=True)
-        master_df = master_df[['TIC ID', 'TOI Number', 'Telescope', 'Tel. Size (m)', 'Date', 'Camera',
+        master_df = master_df[['TIC ID', 'TOI', 'Telescope', 'Tel. Size (m)', 'Date', 'Camera',
                                 'Filter', r'Pix. Scale ($\arcsec$/pix)', r'PSF FWHM ($\arcsec$)', r'Aper. Rad. ($\arcsec$)']]
     return master_df
 
-def convert_table_to_latex_and_save(df, filename):
+def convert_table_to_latex_and_save(df, filename, caption='Summary of Follow-up Observations', label='tab:followup'):
     """Convert a DataFrame to LaTeX format and save it to a file.
 
     Parameters
@@ -1460,8 +1460,12 @@ def convert_table_to_latex_and_save(df, filename):
         The DataFrame to convert.
     filename : str
         The name of the file to save the LaTeX output.
+    caption : str
+        The caption for the LaTeX table.
+    label : str
+        The label for the LaTeX table.
     """
-    latex_str = df.to_latex(index=False, escape=False, caption='Summary of Follow-up Observations', label='tab:followup', longtable=True)
+    latex_str = df.to_latex(index=False, escape=False, caption=caption, label=label, longtable=True)
 
     # required for longtable to work in a two-column document
     latex_str = '\\onecolumn\n' + latex_str + '\n\\twocolumn'
@@ -1571,11 +1575,11 @@ def generate_master_table(tic_list, toi_list):
         # Add TIC and TOI ids to the first row for this target.
         df['TIC ID'] = tic_id.replace('TIC ', '')
         df.loc[1:, 'TIC ID'] = ''
-        df['TOI Number'] = toi_id
-        df.loc[1:, 'TOI Number'] = ''
+        df['TOI'] = toi_id
+        df.loc[1:, 'TOI'] = ''
 
         master_df = pd.concat([master_df, df], ignore_index=True)
-        master_df = master_df[['TIC ID', 'TOI Number', 'Telescope', 'Date', 'Instrument', 'Imaging Type', 'Filter', 
+        master_df = master_df[['TIC ID', 'TOI', 'Telescope', 'Date', 'Instrument', 'Imaging Type', 'Filter', 
                                r'Pix. Scale ($\arcsec$/pix)', r'PSF FWHM ($\arcsec$)', 'Contrast']]
     return master_df
 
@@ -1592,7 +1596,9 @@ def generate_hri_table(tic_list, toi_list, output_filename):
         The filename for the output LaTeX file.
     """
     master_df = generate_master_table(tic_list, toi_list)
-    convert_table_to_latex_and_save(master_df, output_filename)
+    convert_table_to_latex_and_save(master_df, output_filename,
+                                    caption='Summary of High-resolution Imaging Observations',
+                                    label='tab:hri')
 
 # EXOFASTv2 SED bandnames that map onto the Gaia magnitude rows of the secondary star table
 SECONDARY_GAIA_BANDS = {
