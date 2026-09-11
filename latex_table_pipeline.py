@@ -1357,6 +1357,66 @@ def _extract_grid_rows(html, heading_text):
     return ast.literal_eval(data)
 
 
+# ExoFOP filter names mapped onto the notation used in the literature. Keys are matched
+# case-sensitively, since lower-case single letters are Sloan bands while the upper-case
+# ones are Johnson-Cousins (e.g. "i" is Sloan i-prime but "I" is Cousins I).
+FOLLOWUP_FILTER_NAMES = {
+    # Sloan, written with the conventional prime
+    'up': r"$u'$", 'gp': r"$g'$", 'rp': r"$r'$", 'ip': r"$i'$", 'zp': r"$z'$",
+    'u': r"$u'$", 'g': r"$g'$", 'r': r"$r'$", 'i': r"$i'$", 'z': r"$z'$",
+    'SDSS-u': r"$u'$", 'SDSS-g': r"$g'$", 'SDSS-r': r"$r'$", 'SDSS-i': r"$i'$", 'SDSS-z': r"$z'$",
+    'Sloan-u': r"$u'$", 'Sloan-g': r"$g'$", 'Sloan-r': r"$r'$", 'Sloan-i': r"$i'$", 'Sloan-z': r"$z'$",
+    # z-short
+    'zs': r'$z_s$', 'z_s': r'$z_s$', 'z-s': r'$z_s$', 'zshort': r'$z_s$', 'z-short': r'$z_s$',
+    # Cousins
+    'Rc': r'$R_c$', 'rc': r'$R_c$', 'Ic': r'$I_c$', 'ic': r'$I_c$',
+}
+
+# separators that join several filters into one ExoFOP entry, e.g. "gp-ip" or "g, r, i, z_s"
+_FILTER_SEPARATOR = re.compile(r'(\s*[,+/&-]\s*)')
+
+
+def format_filter_name(filter_name):
+    """Convert an ExoFOP filter name into the notation used in the literature.
+
+    Names listed in FOLLOWUP_FILTER_NAMES are translated directly ("ip" becomes "$i'$"),
+    and any name mentioning a clear filter is collapsed to "Clear", since the bandpasses
+    ExoFOP quotes alongside it ("clear: 650 (500) nm") differ from observation to
+    observation. An entry naming several filters at once is translated only when every
+    piece of it is a known filter, so compound names such as "gp-ip" are converted while
+    descriptive ones such as "g-narrow" are left alone.
+
+    Parameters
+    ----------
+    filter_name : str
+        The filter name as it appears on ExoFOP.
+
+    Returns
+    -------
+    str
+        The converted name, or the original name with LaTeX special characters escaped
+        when no conversion is known.
+    """
+    name = filter_name.strip()
+
+    # Clear filters are quoted with a variety of bandpasses; they are all just "Clear".
+    if 'clear' in name.lower():
+        return 'Clear'
+
+    if name in FOLLOWUP_FILTER_NAMES:
+        return FOLLOWUP_FILTER_NAMES[name]
+
+    # Split on the separators, keeping them, so the original spacing is preserved.
+    pieces = _FILTER_SEPARATOR.split(name)
+    filters = pieces[::2]
+    if len(filters) > 1 and all(piece in FOLLOWUP_FILTER_NAMES for piece in filters):
+        pieces[::2] = [FOLLOWUP_FILTER_NAMES[piece] for piece in filters]
+        return ''.join(pieces)
+
+    # Unrecognised name: escape the LaTeX special characters and leave it as it is.
+    return filter_name.replace('#', r'\#').replace('_', r'\_')
+
+
 def get_followup_table(tic_id):
     """Fetch the follow-up observations for a given TIC ID and return a cleaned DataFrame.
 
@@ -1394,11 +1454,10 @@ def get_followup_table(tic_id):
     df_short['Date'] = pd.to_datetime(df_short['Date'], format='%Y-%m-%d')
     df_short['Date'] = df_short['Date'].dt.strftime('%Y %b %d')
     
-    for filter in df_short['Filter']:
-        if filter is not None:
-            # Escape special LaTeX characters in the filter names
-            escaped_filter = filter.replace('#', r'\#').replace('_', r'\_')
-            df_short.loc[df_short['Filter'] == filter, 'Filter'] = escaped_filter
+    # Convert the filter names to the notation used in the literature, escaping the LaTeX
+    # special characters in any name that has no known conversion.
+    df_short['Filter'] = df_short['Filter'].apply(
+        lambda x: format_filter_name(x) if isinstance(x, str) else x)
     
     # Truncate trailing zeros and convert floats to strings for LaTeX formatting
     float_columns = ['Tel. Size (m)', r'Pix. Scale ($\arcsec$/pix)', r'PSF FWHM ($\arcsec$)', r'Aper. Rad. ($\arcsec$)']
@@ -1480,7 +1539,7 @@ def convert_table_to_latex_and_save(df, filename, caption='Summary of Follow-up 
     with open(filename, 'w') as f:
         f.write(latex_str)
 
-def generate_followup_table(tic_list, toi_list, output_filename):
+def generate_followup_table(tic_list, toi_list, output_filename, print_summary=True):
     """Generate the follow-up table and save it as a LaTeX file.
 
     Parameters
@@ -1491,8 +1550,18 @@ def generate_followup_table(tic_list, toi_list, output_filename):
         List of TOI identifiers.
     output_filename : str
         The filename for the output LaTeX file.
+    print_summary : bool
+        Whether to print the number of follow-up observations and the number of unique
+        telescopes that went into the table. Enabled by default.
     """
     master_df = generate_master_followup_table(tic_list, toi_list)
+
+    if print_summary:
+        n_observations = len(master_df)
+        n_telescopes = master_df['Telescope'].nunique()
+        print(f'Number of follow-up observations: {n_observations}')
+        print(f'Number of unique telescopes: {n_telescopes}')
+
     convert_table_to_latex_and_save(master_df, output_filename, fontsize=r'\scriptsize')
 
 def get_hri_table(tic_id):
@@ -1528,11 +1597,10 @@ def get_hri_table(tic_id):
             new_contrast = contrast.replace('delta', r'$\Delta$')
             df_short.loc[df_short['Contrast'] == contrast, 'Contrast'] = new_contrast
 
-    for filter in df_short['Filter']:
-        if filter is not None:
-            # Escape special LaTeX characters in the filter names
-            escaped_filter = filter.replace('#', r'\#').replace('_', r'\_')
-            df_short.loc[df_short['Filter'] == filter, 'Filter'] = escaped_filter
+    # Convert the filter names to the notation used in the literature, escaping the LaTeX
+    # special characters in any name that has no known conversion.
+    df_short['Filter'] = df_short['Filter'].apply(
+        lambda x: format_filter_name(x) if isinstance(x, str) else x)
 
     # reformat date to Year Mon Day format
     df_short['Date'] = pd.to_datetime(df_short['Date'], format='%Y-%m-%d')
