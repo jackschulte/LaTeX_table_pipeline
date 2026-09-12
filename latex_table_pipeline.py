@@ -2261,7 +2261,7 @@ def secondary_stars_table(target_list, path, file_prefix, tic_list=None, host_li
         typestring = ''.join(' & ' + star_type for star_type in type_labels[sl])
 
         if is_first:
-            caption = r'\caption{Observed Properties the Secondary Stars}'
+            caption = r'\caption{Observed Properties of Secondary Stars}'
         elif MNRAS:
             caption = r'\contcaption{}'
         else:
