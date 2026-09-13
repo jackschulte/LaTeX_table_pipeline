@@ -1,8 +1,7 @@
 """Generates the table of high-resolution imaging observations."""
 
 import pandas as pd
-from urllib.request import urlopen
-from table_utils import _extract_grid_rows, convert_table_to_latex_and_save, format_filter_name
+from table_utils import _extract_grid_rows, convert_table_to_latex_and_save, fetch_exofop_page, format_filter_name
 
 def get_hri_table(tic_id):
     """Fetch the high-resolution imaging observations for a given TIC ID and return a cleaned DataFrame.
@@ -17,11 +16,7 @@ def get_hri_table(tic_id):
     pandas.DataFrame
         A cleaned table with telescope, date, camera, filter, and size metadata.
     """
-    if tic_id.startswith('TIC '):
-        tic_id = tic_id.replace('TIC ', '')
-    url = "https://exofop.ipac.caltech.edu/tess/target.php?id=" + tic_id
-    with urlopen(url, timeout=20) as response:
-        html = response.read().decode('utf-8', 'ignore')
+    html = fetch_exofop_page(tic_id)
 
     rows = _extract_grid_rows(html, 'Imaging Observations')
 

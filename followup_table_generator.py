@@ -5,10 +5,9 @@ import pandas as pd
 import re
 import glob
 import subprocess
-from urllib.request import urlopen
 import logging
 from table_utils import (FOLLOWUP_FILTER_NAMES, _FILTER_SEPARATOR, _extract_grid_rows,
-                         convert_table_to_latex_and_save, format_filter_name)
+                         convert_table_to_latex_and_save, fetch_exofop_page, format_filter_name)
 
 # EXOFASTv2 names its transit files "n<YYYYMMDD>.<filter>.<telescope>.<target>.dat",
 # e.g. "n20211119.Sloani.KeplerCam.TOI-3788.dat"
@@ -124,6 +123,20 @@ def read_lightcurve_files(target_folder_names, file_pattern='n2*.dat',
             for folder, rows in lightcurves.items()}
 
 
+# A telescope size written into the telescope's name, which the size column already gives:
+# "1m0" and "0m4p" as LCO writes them, "0.4m", "0-4m", "036m", or "12in", with or without a
+# separator. Only a number with a unit is taken, so model numbers such as "CDK20" or "T100" stay.
+TELESCOPE_SIZE_IN_NAME = re.compile(r'[-_\s]?(?:\d+m\d+p?|\d*\.\d+m|\d+-\d+m|\d+m|\d+(?:\.\d+)?\s?(?:cm|in|inch))$')
+
+
+def _trim_telescope_size(name):
+    """Remove a size written into a telescope's name, e.g. "1m0" from "LCO-McD-1m0"."""
+    if not isinstance(name, str):
+        return name
+    trimmed = TELESCOPE_SIZE_IN_NAME.sub('', name).rstrip(' -_')
+    return trimmed or name
+
+
 # the columns of one target's follow-up table, before its TIC and TOI are added
 FOLLOWUP_COLUMNS = ['Telescope', 'Tel. Size (m)', 'Date', 'Camera', 'Filter', r'Pix. Scale ($\arcsec$/pix)',
                     r'PSF FWHM ($\arcsec$)', r'Aper. Rad. ($\arcsec$)']
@@ -142,11 +155,7 @@ def get_followup_table(tic_id):
     pandas.DataFrame
         A cleaned table with telescope, date, camera, filter, and size metadata.
     """
-    if tic_id.startswith('TIC '):
-        tic_id = tic_id.replace('TIC ', '')
-    url = "https://exofop.ipac.caltech.edu/tess/target.php?id=" + tic_id
-    with urlopen(url, timeout=20) as response:
-        html = response.read().decode('utf-8', 'ignore')
+    html = fetch_exofop_page(tic_id)
 
     rows = _extract_grid_rows(html, 'Time Series Observations')
 
@@ -157,6 +166,8 @@ def get_followup_table(tic_id):
     # Extract telescope size (m) and remove it from the Telescope column.
     df_short['Tel. Size (m)'] = df_short['Telescope'].str.extract(r'\((\d*\.?\d*)\s*m\)', expand=False).astype(float)
     df_short['Telescope'] = df_short['Telescope'].str.replace(r'\s*\(\d*\.?\d*\s*m\)', '', regex=True).str.strip()
+    # Some names repeat the size inside them too ("LCO-McD-1m0"), which is trimmed as well.
+    df_short['Telescope'] = df_short['Telescope'].apply(_trim_telescope_size)
 
     df_short = df_short.sort_values(by='Date', ascending=True).reset_index(drop=True)
     df_short = df_short[FOLLOWUP_COLUMNS]
@@ -302,8 +313,9 @@ def build_lightcurve_rows(exofop, lightcurves, toi_id=''):
     whose filter does, and last one fewer files have been paired with already, so that two
     identical entries on one night go to two different files. A pairing across dates is named
     in a warning, since the row then gives ExoFOP's date rather than the filename's. A file with
-    no such observation still gets a row, giving the telescope and filter as its filename does
-    and "---" for everything else, and is named in a warning too.
+    no such observation still gets a row, giving the date, telescope (less any size in its
+    name) and filter as its filename does and "---" for everything else, and is named in a
+    warning too.
 
     Parameters
     ----------
@@ -353,7 +365,9 @@ def build_lightcurve_rows(exofop, lightcurves, toi_id=''):
                 redated.append(f"{lightcurve['Filename']} vs {row['Telescope']} on {row['Date']}")
         else:
             row = dict.fromkeys(FOLLOWUP_COLUMNS, '---')
-            row['Telescope'] = lightcurve['Telescope'].replace('#', r'\#').replace('_', r'\_')
+            row['Date'] = lightcurve['Date'].strftime('%Y %b %d')
+            # trimmed before escaping, as the size can follow an underscore
+            row['Telescope'] = _trim_telescope_size(lightcurve['Telescope']).replace('#', r'\#').replace('_', r'\_')
             row['Filter'] = format_filter_name(lightcurve['Filter'])
             unmatched.append(lightcurve['Filename']
                              + (f" (nearby on ExoFOP: {', '.join(nearby)})" if nearby else ''))
@@ -367,7 +381,7 @@ def build_lightcurve_rows(exofop, lightcurves, toi_id=''):
     if unmatched:
         logging.warning(f'TOI-{toi_id}: {len(unmatched)} of its {len(ground_based)} non-TESS lightcurve '
                         f'files have no matching ExoFOP observation, so their rows give only the '
-                        f'telescope and filter: {"; ".join(unmatched)}.'
+                        f'date, telescope and filter: {"; ".join(unmatched)}.'
                         + (' If a nearby ExoFOP observation is the same one under another telescope '
                            'name, pair the names up in TELESCOPE_ALIASES.' if near_miss else ''))
 
@@ -466,8 +480,8 @@ def generate_followup_table(tic_list, toi_list, output_filename, print_summary=T
     fit_observations_only : bool
         Whether to list the observations that were actually fit rather than everything on
         ExoFOP. The lightcurve filenames decide the rows: each non-TESS lightcurve gets one,
-        filled in from its ExoFOP observation, or with only its telescope and filter when
-        ExoFOP has none. Requires target_folder_names.
+        filled in from its ExoFOP observation, or with only its date, telescope and filter
+        when ExoFOP has none. Requires target_folder_names.
     target_folder_names : list[str], optional
         The fit folder of each target, in the same order as tic_list, e.g. "meep3/toi3788".
     **lightcurve_kwargs

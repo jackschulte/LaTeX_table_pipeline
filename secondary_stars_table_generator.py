@@ -5,9 +5,8 @@ import os
 import pandas as pd
 from astroquery.vizier import Vizier
 from astropy.coordinates import Angle
-from urllib.request import urlopen
 import logging
-from table_utils import _extract_grid_rows, grab_medians, remove_sci_notation, round_sig_figs, write
+from table_utils import _extract_grid_rows, fetch_exofop_page, grab_medians, remove_sci_notation, round_sig_figs, write
 
 # EXOFASTv2 SED bandnames that map onto the Gaia magnitude rows of the secondary star table
 SECONDARY_GAIA_BANDS = {
@@ -88,13 +87,14 @@ def get_stellar_companions(tic_id):
         One entry per ExoFOP companion detection, with the angular separation and its
         uncertainty (arcsec), position angle (degrees), filter, magnitude difference, and
         observation date. An empty list is returned if the target has no companions listed.
+
+    Raises
+    ------
+    ExoFOPFetchError
+        If the page cannot be fetched in full, so that a failed fetch is not mistaken for a
+        target without companions.
     """
-    tic_id = str(tic_id)
-    if tic_id.startswith('TIC '):
-        tic_id = tic_id.replace('TIC ', '')
-    url = "https://exofop.ipac.caltech.edu/tess/target.php?id=" + tic_id
-    with urlopen(url, timeout=20) as response:
-        html = response.read().decode('utf-8', 'ignore')
+    html = fetch_exofop_page(tic_id)
 
     try:
         rows = _extract_grid_rows(html, 'Stellar Companions')
