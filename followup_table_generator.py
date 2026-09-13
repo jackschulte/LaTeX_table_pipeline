@@ -1,0 +1,403 @@
+"""Generates the table of ground-based photometric follow-up observations."""
+
+import os
+import pandas as pd
+import re
+import glob
+import subprocess
+from urllib.request import urlopen
+from table_utils import _extract_grid_rows, convert_table_to_latex_and_save, format_filter_name
+
+# EXOFASTv2 names its transit files "n<YYYYMMDD>.<filter>.<telescope>.<target>.dat",
+# e.g. "n20211119.Sloani.KeplerCam.TOI-3788.dat"
+LIGHTCURVE_DATE = re.compile(r'^n(\d{8})$')
+
+# An aperture written with a decimal point, as in "GdP-0.4m", is split in two by the full
+# stops that separate the fields; this matches the half that got left behind.
+LIGHTCURVE_APERTURE = re.compile(r'^\d+m$')
+
+
+def parse_lightcurve_filename(filename):
+    """Read the date, filter, and telescope out of an EXOFASTv2 lightcurve filename.
+
+    The fields are separated by full stops, but a telescope name may contain one itself when
+    its aperture is part of the name ("GdP-0.4m"), so a field that is only an aperture is
+    joined back onto the telescope before it. Whatever follows the telescope is the target
+    and, for the TESS lightcurves, the sector and cadence they were binned to; none of it
+    is read.
+
+    Parameters
+    ----------
+    filename : str
+        A filename such as "n20211119.Sloani.KeplerCam.TOI-3788.dat".
+
+    Returns
+    -------
+    dict or None
+        The Date, Filter, and Telescope, or None if the name is not a lightcurve.
+    """
+    fields = os.path.splitext(os.path.basename(filename))[0].split('.')
+    if len(fields) < 3:
+        return None
+
+    date = LIGHTCURVE_DATE.match(fields[0])
+    if date is None:
+        return None
+
+    telescope = fields[2]
+    for field in fields[3:]:
+        if not (telescope[-1:].isdigit() and LIGHTCURVE_APERTURE.match(field)):
+            break
+        telescope += '.' + field
+
+    return {'Date': pd.to_datetime(date.group(1), format='%Y%m%d'),
+            'Filter': fields[1],
+            'Telescope': telescope}
+
+
+def read_lightcurve_files(target_folder_names, file_pattern='n2*.dat',
+                          hpcc_path='jschulte@rsync.hpcc.msu.edu:/mnt/research/Exoplanet_Lab/jack/Global_Fits/'):
+    """Compile the date, filter, and telescope of every transit lightcurve fit for each object.
+
+    The files themselves are never copied over; only their names are read, which is all that
+    is needed to know which observations went into a fit. When hpcc_path names a remote
+    machine the listing is done with a single ssh call, so the connection is only made once
+    however many objects are asked for.
+
+    Parameters
+    ----------
+    target_folder_names : str or list[str]
+        The folder holding each object's fit files, relative to hpcc_path, e.g.
+        "meep3/toi3788". A single string is accepted for one object.
+    file_pattern : str
+        The glob matching the lightcurve files inside each folder. The default matches the
+        "n<YYYYMMDD>" every lightcurve name opens with, without picking up the other files
+        a fit folder holds.
+    hpcc_path : str
+        The path the folders sit under. A "user@host:" prefix reads the names over ssh; a
+        path without one is read from the local filesystem instead.
+
+    Returns
+    -------
+    dict[str, pandas.DataFrame]
+        One table per target folder, with the Date, Filter, Telescope, and Filename of each
+        lightcurve. A folder with no lightcurve files gets an empty table.
+    """
+    if isinstance(target_folder_names, str):
+        target_folder_names = [target_folder_names]
+
+    if ':' in hpcc_path:
+        host, base_path = hpcc_path.split(':', 1)
+    else:
+        host, base_path = None, hpcc_path
+    base_path = base_path.rstrip('/')
+
+    patterns = [f"{base_path}/{folder.strip('/')}/{file_pattern}" for folder in target_folder_names]
+
+    if host is None:
+        filepaths = [path for pattern in patterns for path in sorted(glob.glob(pattern))]
+    else:
+        # ls expands the globs itself, and prints each path as it was given, so one call
+        # covers every object and the paths still say which folder they came from.
+        result = subprocess.run(['ssh', host, 'ls -1 ' + ' '.join(patterns)],
+                                capture_output=True, text=True)
+        filepaths = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        if not filepaths and result.stderr.strip():
+            print(f'No lightcurve files could be read: {result.stderr.strip()}')
+
+    lightcurves = {folder: [] for folder in target_folder_names}
+    for filepath in filepaths:
+        lightcurve = parse_lightcurve_filename(filepath)
+        if lightcurve is None:
+            continue
+
+        # Attribute the file to the folder its path passes through.
+        for folder in target_folder_names:
+            if f"/{folder.strip('/')}/" in filepath:
+                lightcurve['Filename'] = os.path.basename(filepath)
+                lightcurves[folder].append(lightcurve)
+                break
+
+    return {folder: pd.DataFrame(rows, columns=['Date', 'Filter', 'Telescope', 'Filename'])
+            for folder, rows in lightcurves.items()}
+
+
+def get_followup_table(tic_id):
+    """Fetch the follow-up observations for a given TIC ID and return a cleaned DataFrame.
+
+    Parameters
+    ----------
+    tic_id : str
+        TESS Input Catalog identifier, with or without the leading "TIC " prefix.
+
+    Returns
+    -------
+    pandas.DataFrame
+        A cleaned table with telescope, date, camera, filter, and size metadata.
+    """
+    if tic_id.startswith('TIC '):
+        tic_id = tic_id.replace('TIC ', '')
+    url = "https://exofop.ipac.caltech.edu/tess/target.php?id=" + tic_id
+    with urlopen(url, timeout=20) as response:
+        html = response.read().decode('utf-8', 'ignore')
+
+    rows = _extract_grid_rows(html, 'Time Series Observations')
+
+    df = pd.DataFrame(rows)
+    df_short = df[['tstel', 'tsdate', 'tscam', 'tsfilt', 'tspix', 'tspsf', 'tspar']].copy()
+    df_short.columns = ['Telescope', 'Date', 'Camera', 'Filter', r'Pix. Scale ($\arcsec$/pix)', r'PSF FWHM ($\arcsec$)', r'Aper. Rad. ($\arcsec$)']
+
+    # Extract telescope size (m) and remove it from the Telescope column.
+    df_short['Tel. Size (m)'] = df_short['Telescope'].str.extract(r'\((\d*\.?\d*)\s*m\)', expand=False).astype(float)
+    df_short['Telescope'] = df_short['Telescope'].str.replace(r'\s*\(\d*\.?\d*\s*m\)', '', regex=True).str.strip()
+
+    df_short = df_short.sort_values(by='Date', ascending=True).reset_index(drop=True)
+    df_short = df_short[['Telescope', 'Tel. Size (m)', 'Date', 'Camera', 
+                         'Filter', r'Pix. Scale ($\arcsec$/pix)', r'PSF FWHM ($\arcsec$)', r'Aper. Rad. ($\arcsec$)']]
+
+    # reformat date to Year Mon Day format
+    df_short['Date'] = pd.to_datetime(df_short['Date'], format='%Y-%m-%d')
+    df_short['Date'] = df_short['Date'].dt.strftime('%Y %b %d')
+    
+    # Convert the filter names to the notation used in the literature, escaping the LaTeX
+    # special characters in any name that has no known conversion.
+    df_short['Filter'] = df_short['Filter'].apply(
+        lambda x: format_filter_name(x) if isinstance(x, str) else x)
+    
+    # Truncate trailing zeros and convert floats to strings for LaTeX formatting
+    float_columns = ['Tel. Size (m)', r'Pix. Scale ($\arcsec$/pix)', r'PSF FWHM ($\arcsec$)', r'Aper. Rad. ($\arcsec$)']
+    for col in float_columns:
+        df_short[col] = df_short[col].apply(lambda x: ('{:.3f}'.format(x)).rstrip('0').rstrip('.') if pd.notnull(x) else x)
+
+    # Replace NaNs with '---'
+    df_short = df_short.fillna('---')
+
+    return df_short
+
+
+# ExoFOP names a few telescopes by their instrument where the fit files name the site the
+# instrument sits at, a difference no comparison of the names themselves can bridge. The key
+# is the name ExoFOP uses and the value the name the filenames use; add pairings as they
+# turn up among the observations that get reported as dropped.
+TELESCOPE_ALIASES = {'CDK20': 'El_Sauce'}
+
+
+def _canonical_name(name):
+    """Reduce a telescope or filter name to the letters and digits it is built from.
+
+    The LaTeX a filter name is written with ("$i'$"), the prefixes EXOFASTv2 spells out
+    ("Sloani"), and the punctuation observatories are quoted with ("LCOGT-CTIO") all get
+    stripped, so that the names can be compared across the two sources.
+    """
+    name = re.sub(r"[$\\{}'_]", '', str(name))
+    name = re.sub(r'[^a-z0-9]', '', name.lower())
+    # EXOFASTv2 writes the Sloan bands as "Sloani", the table as "i"
+    if name.startswith('sloan'):
+        name = name[len('sloan'):]
+    return name
+
+
+def _name_tokens(name):
+    """The words a telescope or filter name is built from, e.g. "lco", "hal", "0m35".
+
+    Words of one or two characters are left out, being too short to tell anything apart.
+    """
+    name = re.sub(r"[$\\{}']", '', str(name))
+    tokens = (_canonical_name(token) for token in re.split(r'[^A-Za-z0-9]+', name))
+    return {token for token in tokens if len(token) > 2}
+
+
+def _names_agree(table_name, file_name):
+    """Whether a telescope or filter in the table is the one named in a lightcurve filename.
+
+    The two sources name the same telescope differently: ExoFOP gives the observatory and
+    the instrument in full, while a filename abbreviates and often keeps only one of them.
+    They are taken to agree when either whole name contains the other ("LCOGT" matches
+    "LCO-SAAO-1m0"), or when any word of one matches a word of the other, which is what
+    pairs "Unistellar eVscope2" with "eVscope_TO" and "Celestron C11" with "Herges-C11_Exo".
+    Names of one or two characters have to match outright instead, so that the Sloan "i" is
+    not read as the Cousins "Ic".
+    """
+    table_full, file_full = _canonical_name(table_name), _canonical_name(file_name)
+    if not table_full or not file_full:
+        return False
+    if len(table_full) <= 2 or len(file_full) <= 2:
+        return table_full == file_full
+    if table_full in file_full or file_full in table_full:
+        return True
+
+    # the separators are gone from the canonical names, so the words are taken from the
+    # names as they were written
+    return any(table_token in file_token or file_token in table_token
+               for table_token in _name_tokens(table_name)
+               for file_token in _name_tokens(file_name))
+
+
+def _telescopes_agree(table_name, file_name):
+    """Whether the table's telescope is the one a lightcurve filename names.
+
+    The names are compared as they are written, and then again through TELESCOPE_ALIASES,
+    which carries the telescopes the two sources call by unrelated names.
+    """
+    if _names_agree(table_name, file_name):
+        return True
+    alias = TELESCOPE_ALIASES.get(str(table_name).strip())
+    return alias is not None and _names_agree(alias, file_name)
+
+
+def drop_unfit_observations(df, lightcurves, toi_id=''):
+    """Drop the observations of a target that were not fit, judging by the lightcurve files.
+
+    The observation date is what identifies a lightcurve, so it is matched first; among the
+    files taken on the same night, the telescope or the filter then has to agree as well.
+    A row whose date is absent from the filenames is dropped outright. A row whose date is
+    present but whose telescope and filter both disagree is also dropped, and reported,
+    since those are the ones a shorthand in the filename could have caused.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        One target's follow-up table, with its dates still written as "%Y %b %d".
+    lightcurves : pandas.DataFrame
+        That target's lightcurve files, as returned by read_lightcurve_files.
+    toi_id : str
+        The TOI the table belongs to, used only to label what was dropped.
+
+    Returns
+    -------
+    pandas.DataFrame
+        The rows of df whose observations appear among the lightcurve files.
+    """
+    if lightcurves.empty:
+        print(f'No lightcurve files found for TOI-{toi_id}; keeping all of its observations.')
+        return df
+
+    dates = pd.to_datetime(df['Date'], format='%Y %b %d', errors='coerce')
+
+    keep, mismatched = [], []
+    for index, date in dates.items():
+        same_night = lightcurves[lightcurves['Date'] == date]
+        if same_night.empty:
+            keep.append(False)
+            continue
+
+        matched = any(_telescopes_agree(df.at[index, 'Telescope'], lightcurve['Telescope'])
+                      or _names_agree(df.at[index, 'Filter'], lightcurve['Filter'])
+                      for _, lightcurve in same_night.iterrows())
+        keep.append(matched)
+        if not matched:
+            mismatched.append(f"{df.at[index, 'Date']} {df.at[index, 'Telescope']} "
+                              f"({df.at[index, 'Filter']}) vs {', '.join(same_night['Filename'])}")
+
+    for description in mismatched:
+        print(f'TOI-{toi_id}: dropped an observation whose date is fit but whose telescope '
+              f'and filter both differ: {description}')
+    if mismatched:
+        print('If any of those are the same observation under another name, pair the names '
+              'up in TELESCOPE_ALIASES.')
+
+    return df[pd.Series(keep, index=df.index)]
+
+
+def generate_master_followup_table(tic_list, toi_list, fit_observations_only=False,
+                                  target_folder_names=None, **lightcurve_kwargs):
+    """Build a combined follow-up table for many TIC/TOI pairs.
+
+    Parameters
+    ----------
+    tic_list : list[str]
+        TIC identifiers, with or without the "TIC " prefix.
+    toi_list : list[str]
+        TOI identifiers, with or without the "TOI-" prefix.
+    fit_observations_only : bool
+        Whether to keep only the observations that were actually fit, which are the ones
+        named by the lightcurve files. Requires target_folder_names.
+    target_folder_names : list[str], optional
+        The fit folder of each target, in the same order as tic_list, e.g. "meep3/toi3788".
+    **lightcurve_kwargs
+        Passed on to read_lightcurve_files, e.g. hpcc_path or file_pattern.
+
+    Returns
+    -------
+    pandas.DataFrame
+        A concatenated table with TIC and TOI columns added to each row group.
+    """
+    lightcurves = {}
+    if fit_observations_only:
+        if target_folder_names is None:
+            raise ValueError('target_folder_names is needed to tell which observations were fit')
+        if len(target_folder_names) != len(tic_list):
+            raise ValueError('target_folder_names must have one folder per target')
+        # one call, so the ssh connection is made once for every target together
+        lightcurves = read_lightcurve_files(target_folder_names, **lightcurve_kwargs)
+
+    master_df = pd.DataFrame()
+
+    for target_index, (tic_id, toi_id) in enumerate(zip(tic_list, toi_list)):
+        if not tic_id.startswith('TIC '):
+            tic_id = 'TIC ' + tic_id
+
+        if toi_id.startswith('TOI-'):
+            toi_id = toi_id.replace('TOI-', '')
+        try:
+            df = get_followup_table(tic_id)
+        except Exception as e:
+            print(f"Error occurred while fetching follow-up table for TOI-{toi_id}: {e}")
+            continue
+
+        # Drop the observations that were not fit, while the rows still belong to one target.
+        if fit_observations_only:
+            df = drop_unfit_observations(df, lightcurves[target_folder_names[target_index]],
+                                         toi_id=toi_id).reset_index(drop=True)
+            if df.empty:
+                print(f'No fit observations found for TOI-{toi_id}; it is left out of the table.')
+                continue
+
+        # Add TIC and TOI ids to the first row for this target.
+        df['TIC ID'] = tic_id.replace('TIC ', '')
+        df.loc[1:, 'TIC ID'] = ''
+        df['TOI'] = toi_id
+        df.loc[1:, 'TOI'] = ''
+
+        master_df = pd.concat([master_df, df], ignore_index=True)
+        master_df = master_df[['TIC ID', 'TOI', 'Telescope', 'Tel. Size (m)', 'Date', 'Camera',
+                                'Filter', r'Pix. Scale ($\arcsec$/pix)', r'PSF FWHM ($\arcsec$)', r'Aper. Rad. ($\arcsec$)']]
+    return master_df
+
+def generate_followup_table(tic_list, toi_list, output_filename, print_summary=True,
+                            fit_observations_only=False, target_folder_names=None,
+                            **lightcurve_kwargs):
+    """Generate the follow-up table and save it as a LaTeX file.
+
+    Parameters
+    ----------
+    tic_list : list[str]
+        List of TIC identifiers.
+    toi_list : list[str]
+        List of TOI identifiers.
+    output_filename : str
+        The filename for the output LaTeX file.
+    print_summary : bool
+        Whether to print the number of follow-up observations and the number of unique
+        telescopes that went into the table. Enabled by default.
+    fit_observations_only : bool
+        Whether to drop the observations that were not fit. The lightcurve files name the
+        observations that were, so their names are read and the table is cut down to the
+        rows they account for. Requires target_folder_names.
+    target_folder_names : list[str], optional
+        The fit folder of each target, in the same order as tic_list, e.g. "meep3/toi3788".
+    **lightcurve_kwargs
+        Passed on to read_lightcurve_files, e.g. hpcc_path or file_pattern.
+    """
+    master_df = generate_master_followup_table(tic_list, toi_list,
+                                               fit_observations_only=fit_observations_only,
+                                               target_folder_names=target_folder_names,
+                                               **lightcurve_kwargs)
+
+    if print_summary:
+        n_observations = len(master_df)
+        n_telescopes = master_df['Telescope'].nunique()
+        print(f'Number of follow-up observations: {n_observations}')
+        print(f'Number of unique telescopes: {n_telescopes}')
+
+    convert_table_to_latex_and_save(master_df, output_filename, fontsize=r'\scriptsize')
