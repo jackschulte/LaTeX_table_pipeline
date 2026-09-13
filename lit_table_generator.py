@@ -7,7 +7,7 @@ from astroquery.vizier import Vizier
 from astropy.coordinates import Angle
 from grab_tres_vsini import grab_tres_vsini
 import re
-import warnings
+import logging
 from table_utils import round_sig_figs, write
 
 def gen_lit_str(array, value, error=None):
@@ -150,7 +150,7 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
         data_gaia = data_gaia[0] # Vizier returns a list of tables, but we only want the first one
         data_gaia.sort('_r') # sort by distance from the target star
         if len(data_gaia) > 1:
-            warnings.warn(f'Multiple sources in Vizier Gaia query of TIC {TIC_IDs[i]}. Selecting closest source.')
+            logging.warning(f'Multiple sources in Vizier Gaia query of TIC {TIC_IDs[i]}. Selecting closest source.')
         data_gaia = data_gaia[0]
 
         twomass_columns=['_r', 'Jmag', 'e_Jmag', 'Hmag', 'e_Hmag', 'Kmag', 'e_Kmag']
@@ -159,7 +159,7 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
         data_2MASS = data_2MASS[0] # Vizier returns a list of tables, but we only want the first one
         data_2MASS.sort('_r') # sort by distance from the target star
         if len(data_2MASS) > 1:
-            warnings.warn(f'Multiple sources in Vizier 2MASS query of TIC {TIC_IDs[i]}. Selecting closest source.')
+            logging.warning(f'Multiple sources in Vizier 2MASS query of TIC {TIC_IDs[i]}. Selecting closest source.')
         data_2MASS = data_2MASS[0]
         
 
@@ -169,7 +169,7 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
         data_WISE = data_WISE[0] # Vizier returns a list of tables, but we only want the first one
         data_WISE.sort('_r') # sort by distance from the target star
         if len(data_WISE) > 1:
-            warnings.warn(f'Multiple sources in Vizier WISE query of TIC {TIC_IDs[i]}. Selecting closest source.')
+            logging.warning(f'Multiple sources in Vizier WISE query of TIC {TIC_IDs[i]}. Selecting closest source.')
         data_WISE = data_WISE[0]
 
         # store other identifiers

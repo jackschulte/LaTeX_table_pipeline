@@ -6,7 +6,7 @@ import pandas as pd
 from astroquery.vizier import Vizier
 from astropy.coordinates import Angle
 from urllib.request import urlopen
-import warnings
+import logging
 from table_utils import _extract_grid_rows, grab_medians, remove_sci_notation, round_sig_figs, write
 
 # EXOFASTv2 SED bandnames that map onto the Gaia magnitude rows of the secondary star table
@@ -435,10 +435,10 @@ def secondary_stars_table(target_list, path, file_prefix, tic_list=None, host_li
         # secondary stars that share a file prefix are taken in the order they are listed in target_list
         occurrence = list(file_prefix[:i]).count(prefix)
         if len(secondary_indices) == 0:
-            warnings.warn(f'There are no secondary stars in the SED file of {prefix}. Skipping {label}.')
+            logging.warning(f'There are no secondary stars in the SED file of {prefix}. Skipping {label}.')
             continue
         if occurrence >= len(secondary_indices):
-            warnings.warn(f'More secondary stars are listed for {prefix} than its SED file holds. Skipping {label}.')
+            logging.warning(f'More secondary stars are listed for {prefix} than its SED file holds. Skipping {label}.')
             continue
         star = secondary_indices[occurrence]
         mags = stars[star]['mags']
@@ -465,7 +465,7 @@ def secondary_stars_table(target_list, path, file_prefix, tic_list=None, host_li
                 distance_up_err = float(medians.upper_error[medians.parname == 'distance_0'].iloc[0])
                 distance_low_err = float(medians.lower_error[medians.parname == 'distance_0'].iloc[0])
             else:
-                warnings.warn(f'There is no distance in the median table of {prefix}. The projected separation of {label} will be omitted.')
+                logging.warning(f'There is no distance in the median table of {prefix}. The projected separation of {label} will be omitted.')
         elif distance_source == 'gaia':
             if tic not in parallax_cache:
                 vgaia = Vizier(columns=['_r', 'Plx', 'e_Plx'], catalog='I/355/gaiadr3')
@@ -485,7 +485,7 @@ def secondary_stars_table(target_list, path, file_prefix, tic_list=None, host_li
             try:
                 detections = get_stellar_companions(tic)
             except Exception as e:
-                warnings.warn(f'Could not fetch the ExoFOP companions of TIC {tic}: {e}')
+                logging.warning(f'Could not fetch the ExoFOP companions of TIC {tic}: {e}')
                 detections = []
             companion_cache[tic] = _group_companion_detections(detections, sep_tol=sep_tol, pa_tol=pa_tol)
         groups = companion_cache[tic]
@@ -501,13 +501,13 @@ def secondary_stars_table(target_list, path, file_prefix, tic_list=None, host_li
         elif len(groups) > 0:
             group, matches, ambiguous = _match_companion_group(groups, deltamags, dmag_tol=dmag_tol)
             if group is None:
-                warnings.warn(f'Could not match {label} to an ExoFOP companion. Its separation will be omitted.')
+                logging.warning(f'Could not match {label} to an ExoFOP companion. Its separation will be omitted.')
             elif ambiguous:
-                warnings.warn(f'{label} matches more than one ExoFOP companion equally well. Its separation will be omitted.')
+                logging.warning(f'{label} matches more than one ExoFOP companion equally well. Its separation will be omitted.')
             else:
                 sep, sep_err = _companion_separation(matches)
         else:
-            warnings.warn(f'ExoFOP lists no companions for TIC {tic}. The separation of {label} will be omitted.')
+            logging.warning(f'ExoFOP lists no companions for TIC {tic}. The separation of {label} will be omitted.')
 
         gen_secondary_str(sep_arr, sep, sep_err)
 
@@ -542,7 +542,7 @@ def secondary_stars_table(target_list, path, file_prefix, tic_list=None, host_li
 
     n_stars = len(star_labels)
     if n_stars == 0:
-        warnings.warn('No secondary stars were found for any target. No table was generated.')
+        logging.warning('No secondary stars were found for any target. No table was generated.')
         return
 
     hosts_named = any(host != '---' for host in host_labels)

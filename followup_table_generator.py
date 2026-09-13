@@ -6,7 +6,9 @@ import re
 import glob
 import subprocess
 from urllib.request import urlopen
-from table_utils import _extract_grid_rows, convert_table_to_latex_and_save, format_filter_name
+import logging
+from table_utils import (FOLLOWUP_FILTER_NAMES, _FILTER_SEPARATOR, _extract_grid_rows,
+                         convert_table_to_latex_and_save, format_filter_name)
 
 # EXOFASTv2 names its transit files "n<YYYYMMDD>.<filter>.<telescope>.<target>.dat",
 # e.g. "n20211119.Sloani.KeplerCam.TOI-3788.dat"
@@ -122,6 +124,11 @@ def read_lightcurve_files(target_folder_names, file_pattern='n2*.dat',
             for folder, rows in lightcurves.items()}
 
 
+# the columns of one target's follow-up table, before its TIC and TOI are added
+FOLLOWUP_COLUMNS = ['Telescope', 'Tel. Size (m)', 'Date', 'Camera', 'Filter', r'Pix. Scale ($\arcsec$/pix)',
+                    r'PSF FWHM ($\arcsec$)', r'Aper. Rad. ($\arcsec$)']
+
+
 def get_followup_table(tic_id):
     """Fetch the follow-up observations for a given TIC ID and return a cleaned DataFrame.
 
@@ -152,8 +159,7 @@ def get_followup_table(tic_id):
     df_short['Telescope'] = df_short['Telescope'].str.replace(r'\s*\(\d*\.?\d*\s*m\)', '', regex=True).str.strip()
 
     df_short = df_short.sort_values(by='Date', ascending=True).reset_index(drop=True)
-    df_short = df_short[['Telescope', 'Tel. Size (m)', 'Date', 'Camera', 
-                         'Filter', r'Pix. Scale ($\arcsec$/pix)', r'PSF FWHM ($\arcsec$)', r'Aper. Rad. ($\arcsec$)']]
+    df_short = df_short[FOLLOWUP_COLUMNS]
 
     # reformat date to Year Mon Day format
     df_short['Date'] = pd.to_datetime(df_short['Date'], format='%Y-%m-%d')
@@ -178,7 +184,7 @@ def get_followup_table(tic_id):
 # ExoFOP names a few telescopes by their instrument where the fit files name the site the
 # instrument sits at, a difference no comparison of the names themselves can bridge. The key
 # is the name ExoFOP uses and the value the name the filenames use; add pairings as they
-# turn up among the observations that get reported as dropped.
+# turn up among the lightcurves reported as having no ExoFOP match.
 TELESCOPE_ALIASES = {'CDK20': 'El_Sauce'}
 
 
@@ -245,58 +251,127 @@ def _telescopes_agree(table_name, file_name):
     return alias is not None and _names_agree(alias, file_name)
 
 
-def drop_unfit_observations(df, lightcurves, toi_id=''):
-    """Drop the observations of a target that were not fit, judging by the lightcurve files.
+# ExoFOP and the lightcurve filenames can date the same night a day apart, in either
+# direction, so an observation is looked for this many days either side of a file's date.
+DATE_TOLERANCE_DAYS = 1
 
-    The observation date is what identifies a lightcurve, so it is matched first; among the
-    files taken on the same night, the telescope or the filter then has to agree as well.
-    A row whose date is absent from the filenames is dropped outright. A row whose date is
-    present but whose telescope and filter both disagree is also dropped, and reported,
-    since those are the ones a shorthand in the filename could have caused.
+
+def _band(name):
+    """The band a filter name refers to, without its subscript: "$z_s$" and "Sloanz" are both "z"."""
+    name = _canonical_name(name)
+    return name[0] if len(name) == 2 and name[1] in 'cs' else name
+
+
+def _filter_components(name):
+    """The filters an ExoFOP filter entry names, e.g. "$g'$" and "$i'$" of "$g'$-$i'$".
+
+    Only an entry made up entirely of recognised filters is split; anything else, such as
+    "g-narrow,NaD", is a single filter whatever punctuation it contains.
+    """
+    pieces = _FILTER_SEPARATOR.split(str(name))[::2]
+    known = set(FOLLOWUP_FILTER_NAMES.values())
+    return pieces if len(pieces) > 1 and all(piece in known for piece in pieces) else [str(name)]
+
+
+def _filters_agree(table_filter, file_filter):
+    """Whether an ExoFOP filter entry includes the band a lightcurve filename names."""
+    band = _band(file_filter)
+    return bool(band) and any(_band(component) == band for component in _filter_components(table_filter))
+
+
+def _observed_filter(table_filter, file_filter):
+    """The filter to show in the row of one lightcurve from an ExoFOP observation.
+
+    ExoFOP describes a multi-band observation in one entry ("$g'$, $r'$, $i'$, $z_s$"), but
+    each band has a lightcurve and so a row of its own, which shows only its own band. The
+    band is written as ExoFOP writes it, that being the more specific of the two ("$z_s$"
+    where the filename can only say "Sloanz").
+    """
+    band = _band(file_filter)
+    matching = [component for component in _filter_components(table_filter) if _band(component) == band]
+    return matching[0] if len(matching) == 1 else table_filter
+
+
+def build_lightcurve_rows(exofop, lightcurves, toi_id=''):
+    """Write one row for each of a target's ground-based lightcurves, from ExoFOP where possible.
+
+    The lightcurve files decide which rows the table has. Every non-TESS file gets exactly
+    one, and ExoFOP observations that no file accounts for are left out. Each file is paired
+    with an ExoFOP observation dated within DATE_TOLERANCE_DAYS of it whose telescope or
+    filter agrees, preferring one on the same date, then one whose telescope agrees, then one
+    whose filter does, and last one fewer files have been paired with already, so that two
+    identical entries on one night go to two different files. A pairing across dates is named
+    in a warning, since the row then gives ExoFOP's date rather than the filename's. A file with
+    no such observation still gets a row, giving the telescope and filter as its filename does
+    and "---" for everything else, and is named in a warning too.
 
     Parameters
     ----------
-    df : pandas.DataFrame
-        One target's follow-up table, with its dates still written as "%Y %b %d".
+    exofop : pandas.DataFrame
+        The target's follow-up table from get_followup_table, with its dates still written
+        as "%Y %b %d". It may be empty.
     lightcurves : pandas.DataFrame
-        That target's lightcurve files, as returned by read_lightcurve_files.
+        The target's lightcurve files, as returned by read_lightcurve_files.
     toi_id : str
-        The TOI the table belongs to, used only to label what was dropped.
+        The TOI the rows belong to, used only to label the warning.
 
     Returns
     -------
     pandas.DataFrame
-        The rows of df whose observations appear among the lightcurve files.
+        One row per non-TESS lightcurve, in the order the lightcurves were taken.
     """
-    if lightcurves.empty:
-        print(f'No lightcurve files found for TOI-{toi_id}; keeping all of its observations.')
-        return df
+    # TESS lightcurves are fit alongside the ground-based ones but never have a row here
+    ground_based = lightcurves[(lightcurves['Telescope'] != 'TESS') & (lightcurves['Filter'] != 'TESS')]
+    ground_based = ground_based.sort_values(['Date', 'Filename'])
 
-    dates = pd.to_datetime(df['Date'], format='%Y %b %d', errors='coerce')
+    dates = pd.to_datetime(exofop['Date'], format='%Y %b %d', errors='coerce')
+    pairings = {index: 0 for index in exofop.index}
 
-    keep, mismatched = [], []
-    for index, date in dates.items():
-        same_night = lightcurves[lightcurves['Date'] == date]
-        if same_night.empty:
-            keep.append(False)
-            continue
+    rows, redated, unmatched, near_miss = [], [], [], False
+    for _, lightcurve in ground_based.iterrows():
+        candidates, nearby = [], []
+        for index, date in dates.items():
+            if pd.isna(date):
+                continue
+            offset = abs((date - lightcurve['Date']).days)
+            if offset > DATE_TOLERANCE_DAYS:
+                continue
+            telescope_agrees = _telescopes_agree(exofop.at[index, 'Telescope'], lightcurve['Telescope'])
+            filter_agrees = _filters_agree(exofop.at[index, 'Filter'], lightcurve['Filter'])
+            if telescope_agrees or filter_agrees:
+                candidates.append(((offset, not telescope_agrees, not filter_agrees, pairings[index]), index))
+            else:
+                nearby.append(f"{exofop.at[index, 'Date']} {exofop.at[index, 'Telescope']} "
+                              f"({exofop.at[index, 'Filter']})")
 
-        matched = any(_telescopes_agree(df.at[index, 'Telescope'], lightcurve['Telescope'])
-                      or _names_agree(df.at[index, 'Filter'], lightcurve['Filter'])
-                      for _, lightcurve in same_night.iterrows())
-        keep.append(matched)
-        if not matched:
-            mismatched.append(f"{df.at[index, 'Date']} {df.at[index, 'Telescope']} "
-                              f"({df.at[index, 'Filter']}) vs {', '.join(same_night['Filename'])}")
+        if candidates:
+            rank, index = min(candidates)
+            pairings[index] += 1
+            row = exofop.loc[index].to_dict()
+            row['Filter'] = _observed_filter(row['Filter'], lightcurve['Filter'])
+            if rank[0]:
+                redated.append(f"{lightcurve['Filename']} vs {row['Telescope']} on {row['Date']}")
+        else:
+            row = dict.fromkeys(FOLLOWUP_COLUMNS, '---')
+            row['Telescope'] = lightcurve['Telescope'].replace('#', r'\#').replace('_', r'\_')
+            row['Filter'] = format_filter_name(lightcurve['Filter'])
+            unmatched.append(lightcurve['Filename']
+                             + (f" (nearby on ExoFOP: {', '.join(nearby)})" if nearby else ''))
+            near_miss |= bool(nearby)
+        rows.append(row)
 
-    for description in mismatched:
-        print(f'TOI-{toi_id}: dropped an observation whose date is fit but whose telescope '
-              f'and filter both differ: {description}')
-    if mismatched:
-        print('If any of those are the same observation under another name, pair the names '
-              'up in TELESCOPE_ALIASES.')
+    if redated:
+        logging.warning(f'TOI-{toi_id}: {len(redated)} of its {len(ground_based)} non-TESS lightcurve '
+                        f'files are paired with an ExoFOP observation on a different date, and their '
+                        f'rows give the ExoFOP date: {"; ".join(redated)}')
+    if unmatched:
+        logging.warning(f'TOI-{toi_id}: {len(unmatched)} of its {len(ground_based)} non-TESS lightcurve '
+                        f'files have no matching ExoFOP observation, so their rows give only the '
+                        f'telescope and filter: {"; ".join(unmatched)}.'
+                        + (' If a nearby ExoFOP observation is the same one under another telescope '
+                           'name, pair the names up in TELESCOPE_ALIASES.' if near_miss else ''))
 
-    return df[pd.Series(keep, index=df.index)]
+    return pd.DataFrame(rows, columns=FOLLOWUP_COLUMNS)
 
 
 def generate_master_followup_table(tic_list, toi_list, fit_observations_only=False,
@@ -310,8 +385,10 @@ def generate_master_followup_table(tic_list, toi_list, fit_observations_only=Fal
     toi_list : list[str]
         TOI identifiers, with or without the "TOI-" prefix.
     fit_observations_only : bool
-        Whether to keep only the observations that were actually fit, which are the ones
-        named by the lightcurve files. Requires target_folder_names.
+        Whether to list the observations that were actually fit rather than everything on
+        ExoFOP. The lightcurve files then decide the rows, one for each non-TESS file, and
+        ExoFOP fills in their details; see build_lightcurve_rows. Requires
+        target_folder_names.
     target_folder_names : list[str], optional
         The fit folder of each target, in the same order as tic_list, e.g. "meep3/toi3788".
     **lightcurve_kwargs
@@ -342,15 +419,22 @@ def generate_master_followup_table(tic_list, toi_list, fit_observations_only=Fal
         try:
             df = get_followup_table(tic_id)
         except Exception as e:
-            print(f"Error occurred while fetching follow-up table for TOI-{toi_id}: {e}")
-            continue
+            logging.warning(f"Error occurred while fetching follow-up table for TOI-{toi_id}: {e}")
+            if not fit_observations_only:
+                continue
+            # the lightcurves still decide the rows, which just go without ExoFOP's details
+            df = pd.DataFrame(columns=FOLLOWUP_COLUMNS)
 
-        # Drop the observations that were not fit, while the rows still belong to one target.
+        # Build the rows from the lightcurves while they still belong to one target.
         if fit_observations_only:
-            df = drop_unfit_observations(df, lightcurves[target_folder_names[target_index]],
-                                         toi_id=toi_id).reset_index(drop=True)
+            target_lightcurves = lightcurves[target_folder_names[target_index]]
+            if target_lightcurves.empty:
+                logging.warning(f'No lightcurve files found for TOI-{toi_id}; keeping all of its '
+                                f'ExoFOP observations instead.')
+            else:
+                df = build_lightcurve_rows(df, target_lightcurves, toi_id=toi_id)
             if df.empty:
-                print(f'No fit observations found for TOI-{toi_id}; it is left out of the table.')
+                logging.warning(f'TOI-{toi_id} has no observations to list; it is left out of the table.')
                 continue
 
         # Add TIC and TOI ids to the first row for this target.
@@ -360,8 +444,7 @@ def generate_master_followup_table(tic_list, toi_list, fit_observations_only=Fal
         df.loc[1:, 'TOI'] = ''
 
         master_df = pd.concat([master_df, df], ignore_index=True)
-        master_df = master_df[['TIC ID', 'TOI', 'Telescope', 'Tel. Size (m)', 'Date', 'Camera',
-                                'Filter', r'Pix. Scale ($\arcsec$/pix)', r'PSF FWHM ($\arcsec$)', r'Aper. Rad. ($\arcsec$)']]
+        master_df = master_df[['TIC ID', 'TOI'] + FOLLOWUP_COLUMNS]
     return master_df
 
 def generate_followup_table(tic_list, toi_list, output_filename, print_summary=True,
@@ -381,9 +464,10 @@ def generate_followup_table(tic_list, toi_list, output_filename, print_summary=T
         Whether to print the number of follow-up observations and the number of unique
         telescopes that went into the table. Enabled by default.
     fit_observations_only : bool
-        Whether to drop the observations that were not fit. The lightcurve files name the
-        observations that were, so their names are read and the table is cut down to the
-        rows they account for. Requires target_folder_names.
+        Whether to list the observations that were actually fit rather than everything on
+        ExoFOP. The lightcurve filenames decide the rows: each non-TESS lightcurve gets one,
+        filled in from its ExoFOP observation, or with only its telescope and filter when
+        ExoFOP has none. Requires target_folder_names.
     target_folder_names : list[str], optional
         The fit folder of each target, in the same order as tic_list, e.g. "meep3/toi3788".
     **lightcurve_kwargs
