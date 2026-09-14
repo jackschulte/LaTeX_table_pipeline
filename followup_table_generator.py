@@ -141,6 +141,10 @@ def _trim_telescope_size(name):
 FOLLOWUP_COLUMNS = ['Telescope', 'Tel. Size (m)', 'Date', 'Camera', 'Filter', r'Pix. Scale ($\arcsec$/pix)',
                     r'PSF FWHM ($\arcsec$)', r'Aper. Rad. ($\arcsec$)']
 
+# The telescope as a lightcurve's filename names it, carried alongside the table's own columns
+# so that eVscopes can be told apart by observer, but never written to the table.
+LIGHTCURVE_TELESCOPE_COLUMN = 'Lightcurve Telescope'
+
 
 def get_followup_table(tic_id):
     """Fetch the follow-up observations for a given TIC ID and return a cleaned DataFrame.
@@ -330,7 +334,8 @@ def build_lightcurve_rows(exofop, lightcurves, toi_id=''):
     Returns
     -------
     pandas.DataFrame
-        One row per non-TESS lightcurve, in the order the lightcurves were taken.
+        One row per non-TESS lightcurve, in the order the lightcurves were taken, with the
+        telescope as its filename names it in LIGHTCURVE_TELESCOPE_COLUMN.
     """
     # TESS lightcurves are fit alongside the ground-based ones but never have a row here
     ground_based = lightcurves[(lightcurves['Telescope'] != 'TESS') & (lightcurves['Filter'] != 'TESS')]
@@ -372,6 +377,7 @@ def build_lightcurve_rows(exofop, lightcurves, toi_id=''):
             unmatched.append(lightcurve['Filename']
                              + (f" (nearby on ExoFOP: {', '.join(nearby)})" if nearby else ''))
             near_miss |= bool(nearby)
+        row[LIGHTCURVE_TELESCOPE_COLUMN] = lightcurve['Telescope']
         rows.append(row)
 
     if redated:
@@ -385,7 +391,37 @@ def build_lightcurve_rows(exofop, lightcurves, toi_id=''):
                         + (' If a nearby ExoFOP observation is the same one under another telescope '
                            'name, pair the names up in TELESCOPE_ALIASES.' if near_miss else ''))
 
-    return pd.DataFrame(rows, columns=FOLLOWUP_COLUMNS)
+    return pd.DataFrame(rows, columns=FOLLOWUP_COLUMNS + [LIGHTCURVE_TELESCOPE_COLUMN])
+
+
+# A Unistellar eVscope as the lightcurve filenames name it, by its observer's initials ("eVscope_TG")
+EVSCOPE_OBSERVER = re.compile(r'^eVscope_[A-Za-z]{2}$', re.IGNORECASE)
+
+
+def count_unique_telescopes(table):
+    """Count the telescopes a follow-up table's observations were taken with.
+
+    Telescopes are told apart by their names in the table, except for eVscopes. Every observer
+    has an eVscope of their own, which ExoFOP only calls "Unistellar eVscope1" or "eVscope2"
+    but the lightcurve filenames tell apart by the observer's initials ("eVscope_TG"), so an
+    eVscope counts once for each set of initials. A table without LIGHTCURVE_TELESCOPE_COLUMN
+    has nothing to tell them apart by and is counted by name alone.
+
+    Parameters
+    ----------
+    table : pandas.DataFrame
+        A follow-up table, as returned by generate_master_followup_table.
+
+    Returns
+    -------
+    int
+        The number of distinct telescopes.
+    """
+    names = table['Telescope']
+    if LIGHTCURVE_TELESCOPE_COLUMN in table:
+        observer = table[LIGHTCURVE_TELESCOPE_COLUMN].apply(lambda name: bool(EVSCOPE_OBSERVER.match(str(name))))
+        names = names.where(~observer, table[LIGHTCURVE_TELESCOPE_COLUMN])
+    return names.nunique()
 
 
 def generate_master_followup_table(tic_list, toi_list, fit_observations_only=False,
@@ -411,7 +447,9 @@ def generate_master_followup_table(tic_list, toi_list, fit_observations_only=Fal
     Returns
     -------
     pandas.DataFrame
-        A concatenated table with TIC and TOI columns added to each row group.
+        A concatenated table with TIC and TOI columns added to each row group. With
+        fit_observations_only it also has LIGHTCURVE_TELESCOPE_COLUMN, which is used for
+        counting telescopes and is not meant to be written to the table.
     """
     lightcurves = {}
     if fit_observations_only:
@@ -422,6 +460,9 @@ def generate_master_followup_table(tic_list, toi_list, fit_observations_only=Fal
         # one call, so the ssh connection is made once for every target together
         lightcurves = read_lightcurve_files(target_folder_names, **lightcurve_kwargs)
 
+    # reindexed rather than selected, so a target that kept its ExoFOP rows for want of any
+    # lightcurves simply has no lightcurve telescope
+    columns = ['TIC ID', 'TOI'] + FOLLOWUP_COLUMNS + ([LIGHTCURVE_TELESCOPE_COLUMN] if fit_observations_only else [])
     master_df = pd.DataFrame()
 
     for target_index, (tic_id, toi_id) in enumerate(zip(tic_list, toi_list)):
@@ -458,7 +499,7 @@ def generate_master_followup_table(tic_list, toi_list, fit_observations_only=Fal
         df.loc[1:, 'TOI'] = ''
 
         master_df = pd.concat([master_df, df], ignore_index=True)
-        master_df = master_df[['TIC ID', 'TOI'] + FOLLOWUP_COLUMNS]
+        master_df = master_df.reindex(columns=columns)
     return master_df
 
 def generate_followup_table(tic_list, toi_list, output_filename, print_summary=True,
@@ -476,7 +517,8 @@ def generate_followup_table(tic_list, toi_list, output_filename, print_summary=T
         The filename for the output LaTeX file.
     print_summary : bool
         Whether to print the number of follow-up observations and the number of unique
-        telescopes that went into the table. Enabled by default.
+        telescopes that went into the table, each observer's eVscope counting as a telescope
+        of its own (see count_unique_telescopes). Enabled by default.
     fit_observations_only : bool
         Whether to list the observations that were actually fit rather than everything on
         ExoFOP. The lightcurve filenames decide the rows: each non-TESS lightcurve gets one,
@@ -494,8 +536,9 @@ def generate_followup_table(tic_list, toi_list, output_filename, print_summary=T
 
     if print_summary:
         n_observations = len(master_df)
-        n_telescopes = master_df['Telescope'].nunique()
+        n_telescopes = count_unique_telescopes(master_df)
         print(f'Number of follow-up observations: {n_observations}')
         print(f'Number of unique telescopes: {n_telescopes}')
 
-    convert_table_to_latex_and_save(master_df, output_filename, fontsize=r'\scriptsize')
+    convert_table_to_latex_and_save(master_df.drop(columns=LIGHTCURVE_TELESCOPE_COLUMN, errors='ignore'),
+                                    output_filename, fontsize=r'\scriptsize')

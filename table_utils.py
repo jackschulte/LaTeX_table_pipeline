@@ -282,7 +282,13 @@ FOLLOWUP_FILTER_NAMES = {
     # Johnson-Cousins and near-infrared, italicised but otherwise unchanged
     'U': r'$U$', 'B': r'$B$', 'V': r'$V$', 'R': r'$R$', 'I': r'$I$',
     'J': r'$J$', 'H': r'$H$', 'K': r'$K$', 'Ks': r'$K_s$', 'K_s': r'$K_s$',
+    # near-infrared narrow bands, as high-resolution imagers use them
+    'Jcont': r'$Jcont$', 'Hcont': r'$Hcont$', 'Kcont': r'$Kcont$',
+    'Brgamma': r'$Br\gamma$', 'Br-gamma': r'$Br\gamma$',
 }
+
+# units a filter's wavelength can be given in, written upright
+FILTER_UNITS = {'nm': 'nm', 'microns': r'\textmu m', 'micron': r'\textmu m', 'um': r'\textmu m'}
 
 # separators that join several filters into one ExoFOP entry, e.g. "gp-ip" or "g, r, i, z_s"
 _FILTER_SEPARATOR = re.compile(r'(\s*[,+/&-]\s*)')
@@ -299,7 +305,9 @@ def format_filter_name(filter_name):
     piece of it is a known filter, so compound names such as "gp-ip" are converted while
     descriptive ones such as "g-narrow" are left alone. An entry that names a standard
     filter and then the instrument and bandpass behind a colon, as "R-ASTEP+: 850 (138) nm"
-    does, keeps only the filter.
+    does, keeps only the filter. One named only by its central wavelength, as a speckle
+    camera's "562: 562 (54) nm" is, becomes "562 nm", with neither the number nor the unit
+    italicised.
 
     Parameters
     ----------
@@ -340,6 +348,12 @@ def format_filter_name(filter_name):
         band = band.split('-')[0].strip()
         if band in FOLLOWUP_FILTER_NAMES:
             return FOLLOWUP_FILTER_NAMES[band]
+
+        # a filter named by its central wavelength keeps the wavelength and the unit it is in
+        wavelength = re.fullmatch(r'\d+(?:\.\d+)?', name.split(':')[0].strip())
+        unit = re.search(r'\)\s*([A-Za-z]+)\s*$', name)
+        if wavelength and unit and unit.group(1).lower() in FILTER_UNITS:
+            return f'{wavelength.group()} {FILTER_UNITS[unit.group(1).lower()]}'
 
     # Unrecognised name: escape the LaTeX special characters and leave it as it is.
     return filter_name.replace('#', r'\#').replace('_', r'\_')
