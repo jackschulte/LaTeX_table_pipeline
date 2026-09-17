@@ -255,12 +255,12 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     selected_parameters = {_normalize_param_name(param) for param in parameters}
 
     # Initializing strings with LaTeX for each parameter
-    mstars=[r'$M_*$ & Mass (\msun) ']
-    rstars=[r'$R_*$ & Radius (\rsun) ']
-    rstarseds=[r'$R_{*,SED}$ & Radius$ (\rsun) ']
-    lstars=[r'$L_*$ & Luminosity (\lsun) ']
+    mstars=[r'$M_\star$ & Mass (\msun) ']
+    rstars=[r'$R_\star$ & Radius (\rsun) ']
+    rstarseds=[r'$R_{\star,SED}$ & Radius$ (\rsun) ']
+    lstars=[r'$L_\star$ & Luminosity (\lsun) ']
     fbols=[r'$F_{\rm Bol}$ & Bolometric flux (cgs) ']
-    rhostars=[r'$\rho_*$ & Density (cgs) ']
+    rhostars=[r'$\rho_\star$ & Density (cgs) ']
     loggs=[r'$\log{g}$ & Surface gravity (cgs) ']
     teffs=[r'$T_{\rm eff}$ & Effective temperature (K) ']
     teffseds=[r'$T_{\rm eff,SED}$ & Effective temperature (K) ']
@@ -268,7 +268,7 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     initfehs=[r'$[{\rm Fe/H}]_{0}$ & Initial metallicity (dex) ']
     ages=[r'Age & Age (Gyr) ']
     eeps=[r'EEP & Equivalent evolutionary phase ']
-    logmstars=[r'$\log{M_*}$ & Mass ($\log{\msun}$) ']
+    logmstars=[r'$\log{M_\star}$ & Mass ($\log{\msun}$) ']
     avs=[r'$A_V$ & V-band extinction (mag) ']
     errscales=[r'$\sigma_{SED}$ & SED photometry error scaling ']
     plaxes=[r'$\varpi$ & Parallax (mas) ']
@@ -299,14 +299,14 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     semimajors=[r'$a$ & Semi-major axis (AU) ']
     idegs=[r'$i$ & Inclination (Degrees) ']
     eccs=[r'$e$ & Eccentricity ']
-    odegs=[r'$\omega_*$ & Argument of periastron (Degrees) ']
+    odegs=[r'$\omega_\star$ & Argument of periastron (Degrees) ']
     teqs=[r'$\teq$ & Equilibrium temperature (K) ']
     tcircs=[r'$\tau_{\rm circ}$ & Tidal circularization timescale (Gyr) ']
     ks=[r'$K$ & RV semi-amplitude (m/s) ']
     slopes=[r'$\dot{\gamma}$ & RV slope (m/s/day) ']
-    ps=[r'$R_{\rm P}/R_*$ & Radius of planet in stellar radii  ']
-    ars=[r'$a/R_*$ & Semi-major axis in stellar radii  ']
-    deltas=[r'$\delta$ & $\left(R_{\rm P}/R_*\right)^2$ ']
+    ps=[r'$R_{\rm P}/R_\star$ & Radius of planet in stellar radii  ']
+    ars=[r'$a/R_\star$ & Semi-major axis in stellar radii  ']
+    deltas=[r'$\delta$ & $\left(R_{\rm P}/R_\star\right)^2$ ']
     Tdepths=[r'Depth & \tess flux decrement at mid-transit ']
     taus=[r'$\tau$ & Ingress/egress transit duration (days) ']
     t14s=[r'$T_{14}$ & Total transit duration (days) ']
@@ -329,11 +329,11 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     tas=[r'$T_{\rm A}$ & Time of ascending node (\bjdtdb) ']
     tds=[r'$T_{\rm D}$ & Time of descending node (\bjdtdb) ']
     vcves=[r'$V_c/V_e$ ']
-    ecosws=[r'$e\cos{\omega_*}$ & ']
-    esinws=[r'$e\sin{\omega_*}$ & ']
+    ecosws=[r'$e\cos{\omega_\star}$ & ']
+    esinws=[r'$e\sin{\omega_\star}$ & ']
     msinis=[r'$M_{\rm P}\sin{i}$ & Minimum mass (\mj) ']
-    qs=[r'$M_{\rm P}/M_*$ & Mass ratio  ']
-    drs=[r'$d/R_*$ & Separation at mid-transit  ']
+    qs=[r'$M_{\rm P}/M_\star$ & Mass ratio  ']
+    drs=[r'$d/R_\star$ & Separation at mid-transit  ']
     pts=[r'$P_{\rm T}$ & A priori non-grazing transit prob  ']
     ptgs=[r'$P_{\rm T,G}$ & A priori transit prob  ']
     pss=[r'$P_{\rm S}$ & A priori non-grazing eclipse prob ']
@@ -662,8 +662,8 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     r'\providecommand{\feh}{\ensuremath{\left[{\rm Fe}/{\rm H}\right]}}'+'\n'+
     r'\providecommand{\teff}{\ensuremath{T_{\rm eff}}}'+'\n'+
     r'\providecommand{\teq}{\ensuremath{T_{\rm eq}}}'+'\n'+
-    r'\providecommand{\ecosw}{\ensuremath{e\cos{\omega_*}}}'+'\n'+
-    r'\providecommand{\esinw}{\ensuremath{e\sin{\omega_*}}}'+'\n'+
+    r'\providecommand{\ecosw}{\ensuremath{e\cos{\omega_\star}}}'+'\n'+
+    r'\providecommand{\esinw}{\ensuremath{e\sin{\omega_\star}}}'+'\n'+
     r'\providecommand{\msun}{\ensuremath{\,M_\Sun}}'+'\n'+
     r'\providecommand{\rsun}{\ensuremath{\,R_\Sun}}'+'\n'+
     r'\providecommand{\lsun}{\ensuremath{\,L_\Sun}}'+'\n'+
