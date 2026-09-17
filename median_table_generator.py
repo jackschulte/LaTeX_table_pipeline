@@ -1,5 +1,6 @@
 """Generates the tables of median EXOFASTv2 fit parameters."""
 
+import logging
 import numpy as np
 import os
 import pandas as pd
@@ -67,12 +68,55 @@ def grab_priors(file_prefix, path):
             continue
         # try the exact name first, then fall back to stripping the '_0' suffix
         for candidate in (val, val.replace('_0', '')):
-            match = priors.loc[priors.variable == candidate, 'meanvalue']
+            match = priors.loc[priors.variable == candidate]
             if len(match):
-                priors.loc[i, 'meanvalue'] = match.iloc[0]
+                # a variable can appear several times: once under '# intializing linked parameters'
+                # holding only a starting value, and again where its prior is actually declared.
+                # Link to the row carrying the prior when there is one.
+                declared = match[_defines_gaussian_prior(match)]
+                source = declared if len(declared) else match
+                priors.loc[i, 'meanvalue'] = source.meanvalue.iloc[0]
                 break
-    priors['meanvalue'] = priors['meanvalue'].astype(float) # to ensure that all mean values are floats
+    # to ensure that all mean values are floats. A link whose target is absent (e.g. the target row is
+    # commented out in the prior file) is left as NaN rather than raising and losing the whole table.
+    priors['meanvalue'] = pd.to_numeric(priors['meanvalue'], errors='coerce')
     return priors
+
+def _defines_gaussian_prior(priortable):
+    '''
+    Flags the rows of a prior table that actually declare a Gaussian prior, as opposed to the rows that
+    merely repeat a variable.
+
+    EXOFASTv2 writes a variable's name more than once in a '.priors.final' file. Under the
+    '# intializing linked parameters' header it lists starting values alone (no standard deviation), and a
+    parameter linked to another is written as 'dilute_1 dilute_0 0' with a zeroed standard deviation. Only a
+    row with a finite, positive standard deviation states a Gaussian prior, so this is what distinguishes
+    the prior from a starting value that happens to be listed first.
+
+    Parameters
+    -----------
+    priortable: Pandas DataFrame of priors obtained using the grab_priors function
+
+    Returns a boolean Series aligned with priortable.
+    '''
+    stdev = pd.to_numeric(priortable['stdev'], errors='coerce')
+    return np.isfinite(stdev) & (stdev > 0)
+
+def _defines_uniform_prior(priortable):
+    '''
+    Flags the rows of a prior table that declare a uniform prior, which EXOFASTv2 writes with a standard
+    deviation of -1 followed by the lower and upper bounds. As with the Gaussian case this separates the
+    declared prior from rows that only repeat the variable's starting value.
+
+    Parameters
+    -----------
+    priortable: Pandas DataFrame of priors obtained using the grab_priors function
+
+    Returns a boolean Series aligned with priortable.
+    '''
+    # the bounds are tested for presence rather than finiteness so that a prior bounded at infinity is
+    # still recognized as declared
+    return priortable['low_bound'].notna() & priortable['up_bound'].notna()
 
 def make_median_string(medians, param, array, star_index=0):
     '''
@@ -552,11 +596,17 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     if show_priors:
         dilute_bool = np.zeros_like(target_list) # to keep track of which targets were fit for dilution
 
-        def prior_value(priortable, column, variable):
+        def prior_value(priortable, column, variable, kind='gaussian'):
             # EXOFASTv2 prior files are inconsistent about capitalization (e.g. 'Av' vs 'av'),
             # so match the variable name case-insensitively; return NaN if it is absent.
             rows = priortable[priortable.variable.str.lower() == variable.lower()]
-            return rows[column].iloc[0] if len(rows) else np.nan
+            if not len(rows):
+                return np.nan
+            # a variable is usually listed more than once, so prefer the row that declares the prior over
+            # one that only repeats the starting value (see _defines_gaussian_prior)
+            declares = _defines_gaussian_prior if kind == 'gaussian' else _defines_uniform_prior
+            declared = rows[declares(rows)]
+            return (declared if len(declared) else rows)[column].iloc[0]
 
         for ii in range(len(target_list)):
             priortable = grab_priors(file_prefix_list[ii], path)
@@ -566,18 +616,25 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
             metallicity_prior_mean = prior_value(priortable, 'meanvalue', 'feh')
             metallicity_prior_stdev = prior_value(priortable, 'stdev', 'feh')
             metallicity_prior.append(r'& $\mathcal{G}$[' + round_sig_figs(metallicity_prior_mean, 5) + r', ' + round_sig_figs(metallicity_prior_stdev, 5) + r'] ')
-            extinction_prior_upperbound = prior_value(priortable, 'up_bound', 'Av')
+            extinction_prior_upperbound = prior_value(priortable, 'up_bound', 'Av', kind='uniform')
             extinction_prior.append(r'& $\mathcal{U}$[0, ' + round_sig_figs(extinction_prior_upperbound, 5) + r'] ')
 
-            for x in priortable.variable: # finding the dilution term
-                if 'dilute' in x:
-                    # use the first dilution term (dilute_0); later dilute_N rows are
-                    # linked to it and carry a zeroed stdev
-                    dilution_prior_mean = priortable.meanvalue[priortable.variable == x].iloc[0]
-                    dilution_prior_stdev = priortable.stdev[priortable.variable == x].iloc[0]
-
-                    dilute_bool[ii] = 1
-                    break
+            # finding the dilution term. A dilution variable turns up several times in a prior file: under
+            # '# intializing linked parameters' with only a starting value, once where its prior is
+            # declared, and once per linked dilute_N row with a zeroed stdev. Take the row that declares a
+            # Gaussian prior rather than whichever row comes first, which would otherwise report the
+            # starting value with a NaN uncertainty.
+            dilute_rows = priortable[priortable.variable.astype(str).str.contains('dilute')]
+            declared_dilution = dilute_rows[_defines_gaussian_prior(dilute_rows)]
+            if len(declared_dilution):
+                dilution_prior_mean = declared_dilution.meanvalue.iloc[0]
+                dilution_prior_stdev = declared_dilution.stdev.iloc[0]
+                dilute_bool[ii] = 1
+            elif len(dilute_rows):
+                # dilution was a fitted parameter but no Gaussian prior was placed on it, so the priors
+                # block has nothing to report for this target
+                logging.warning(f'{file_prefix_list[ii]} fits dilution but declares no Gaussian dilution prior; '
+                                'leaving the dilution prior blank.')
             if dilute_bool[ii]:
                 dilution_prior.append(r'& $\mathcal{G}$[' + round_sig_figs(dilution_prior_mean, 5) + r', ' + remove_sci_notation(float(round_sig_figs(dilution_prior_stdev, 5))) + r'] ')
                 # above line should be cleaned up in a future version. Maybe make a new function that removes scientific notation and sets sig figs for all numbers

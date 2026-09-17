@@ -115,10 +115,10 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
     \ddagger for the following note: Right Ascension and Declination are in epoch J2000. 
     The coordinates come from Vizier where the Gaia RA and Dec have been precessed and corrected to J2000 from epoch J2016.
     '''
-    gaia_g_arr=[r'${\rm G}$ & Gaia $G$ mag. ']
+    gaia_g_arr=[r'$G$ & Gaia $G$ mag. ']
     gaia_bp_arr=[r'$G_{\rm BP}$ & Gaia $G_{\rm BP}$ mag. ']
     gaia_rp_arr=[r'$G_{\rm RP}$ & Gaia $G_{\rm RP}$ mag. ']
-    tmag_arr=[r'${\rm T}$ & TESS mag. ']
+    tmag_arr=[r'$T$ & TESS mag. ']
     j_2mass_arr=[r'$J$ & 2MASS $J$ mag. ']
     h_2mass_arr=[r'$H$ & 2MASS $H$ mag. ']
     k_2mass_arr=[r'$K$ & 2MASS $K$ mag. ']

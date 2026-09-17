@@ -400,7 +400,7 @@ def secondary_stars_table(target_list, path, file_prefix, tic_list=None, host_li
     # initializing rows
     sep_arr = [r'$\rho$ & Angular separation ($\arcsec$) ']
     projsep_arr = [r'$\rho_{\rm proj}$ & Projected separation (AU) ']
-    gaia_g_arr = [r'${\rm G}$ & Gaia $G$ mag. ']
+    gaia_g_arr = [r'$G$ & Gaia $G$ mag. ']
     gaia_bp_arr = [r'$G_{\rm BP}$ & Gaia $G_{\rm BP}$ mag. ']
     gaia_rp_arr = [r'$G_{\rm RP}$ & Gaia $G_{\rm RP}$ mag. ']
     contrast_arrs = {
