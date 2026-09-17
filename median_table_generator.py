@@ -158,7 +158,7 @@ def make_median_string(medians, param, array, star_index=0):
 
 def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False, parameters=None,
               probabilities=None, max_targets_per_table=5, secondary_stars=False, host_list=None,
-              star_types=None, MNRAS=False):
+              star_types=None, MNRAS=False, bimodal_targets=None):
     '''
     Generates a median table given the path to EXOFASTv2 output files.
 
@@ -205,6 +205,12 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     star_types: optional dict of classifications describing what each secondary star is, such as 'Bound companion' or
         'Background star'. Keys are the names in target_list. The classification row is only written if at least one secondary
         star has been classified. Only used when secondary_stars is set.
+    bimodal_targets: optional list of the targets whose mass and age posteriors are bimodal, named as they are in
+        target_list. Each one's name is marked with a superscript asterisk in the column header, and a note pointing at
+        the bimodal table for the individual solutions is written beneath the last table. Names are matched loosely, so
+        'TOI-3988', 'TOI 3988' and 'toi3988' all name the same star, and a name matching no target is reported. Only
+        used for a table of target stars: a bimodal table already gives each solution its own column, and a
+        secondary-star table marks its rows with an asterisk of its own.
     '''
 
     # `secondary_stars` picks which star of the fit the table is built from: False keeps the target star,
@@ -474,6 +480,30 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
         if probability_cells is not None:
             probability_cells = [probability_cells[ii] for ii in kept]
 
+    # A target whose mass and age posteriors are bimodal is marked with a superscript asterisk on its name, and a
+    # note beneath the last table sends the reader to the bimodal table for the two solutions. The names are matched
+    # loosely so that the spelling used here need not match target_list character for character.
+    def _normalize_target_name(name):
+        '''Reduces a target name to letters and digits, so 'TOI-3988', 'TOI 3988' and 'toi3988' all match.'''
+        return re.sub(r'[^a-z0-9]', '', str(name).lower())
+
+    bimodal_names = {_normalize_target_name(name): str(name) for name in (bimodal_targets or [])}
+    if bimodal_names and bimodal:
+        logging.warning('bimodal_targets was given for a bimodal table, where every column already holds one '
+                        'solution of one star; no names will be marked.')
+        bimodal_names = {}
+    unmatched = set(bimodal_names) - {_normalize_target_name(name) for name in target_list}
+    if unmatched:
+        logging.warning('bimodal_targets names ' + ', '.join(sorted(bimodal_names[key] for key in unmatched)) +
+                        ', which match no target in this table; check the spelling against target_list.')
+    target_labels = [str(name) + (r'$^{*}$' if _normalize_target_name(name) in bimodal_names else '')
+                     for name in target_list]
+    show_bimodal_note = any(label.endswith(r'$^{*}$') for label in target_labels)
+    if show_bimodal_note and show_secondary_note:
+        logging.warning('The bimodal-mass note and the secondary-star note both mark what they refer to with an '
+                        'asterisk, so the two cannot be told apart in the table. bimodal_targets is meant for a '
+                        'table of target stars.')
+
     # The rows that identify each secondary star, as in secondary_stars_table(): what the star is, and which
     # planet host it belongs to. Neither row is written unless at least one column has something to put in it.
     host_labels = []
@@ -689,7 +719,7 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
             namestring = ''.join(r' & \multicolumn{' + str(len(group)) + r'}{c}{' + _system_name(group[0]) + r'}'
                                  for group in chunk_groups)
         else:
-            namestring = ''.join(' & ' + str(target_list[i]) for i in idx)
+            namestring = ''.join(' & ' + target_labels[i] for i in idx)
         if bimodal:
             title = r'Median Values and 68\% Confidence Intervals for Solutions which are Bimodal in Mass'
         elif secondary:
@@ -712,8 +742,12 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
                 label = 'bimodal' if bimodal else ('secondarymedian' if secondary else 'median')
                 fout.write(r'\label{tab:' + label + '}' + '\n')
             fout.write(r'\scriptsize' + '\n' +
+                       # booktabs rules, so the table needs \usepackage{booktabs} in the document
+                       # preamble; the columns are set tighter than the LaTeX default so that a
+                       # table of five targets still fits the width of a two-column page
+                       r'\setlength{\tabcolsep}{3.5pt}' + '\n' +
                        r'\begin{tabular}{ll' + colstring + '}'+'\n'+
-                       r'\hline' + '\n' +
+                       r'\toprule' + '\n' +
                        r'& ' + namestring + r'\\' +'\n')
             if bimodal:
                 # which solution each column holds, under the system name it belongs to
@@ -726,7 +760,7 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
             if probability_cells is not None:
                 # the probability of each solution goes on its own header line, under the solution name
                 fout.write(r'& ' + ''.join(' & ' + probability_cells[i] for i in idx) + r'\\' + '\n')
-            fout.write(r'\hline' + '\n')
+            fout.write(r'\midrule' + '\n')
             if show_priors:
                 # the priors are only read for a normal fit, so a bimodal table has no priors block
                 fout.write(r'\multicolumn{' + str(n_chunk + 2) + r'}{l}{\textbf{Priors}:} \\' + '\n' +
@@ -749,12 +783,20 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
                         write(_row_slice(labels, idx), fout)
 
             # conclude with the closing rules; the flushleft notes block is only used in the final table
-            fout.write(r'\hline' + '\n' +
+            fout.write(r'\bottomrule' + '\n' +
                        r'\end{tabular}' + '\n')
-            if is_last and show_priors:
-                fout.write(r'\begin{flushleft}' + '\n' +
-                           r'\textbf{Notes:} The priors for each system are labeled as $\mathcal{G}$[mean, standard deviation] if they are Gaussian priors and $\mathcal{U}$[lower limit, upper limit] if they are uniform priors.' + '\n' +
-                           r'\end{flushleft}' + '\n')
+            if is_last:
+                # every note the table needs goes in one block beneath it, in the order the reader meets
+                # what each one explains: the priors row first, then the asterisks on the column headers
+                notes = []
+                if show_priors:
+                    notes.append(r'The priors for each system are labeled as $\mathcal{G}$[mean, standard deviation] if they are Gaussian priors and $\mathcal{U}$[lower limit, upper limit] if they are uniform priors.')
+                if show_bimodal_note:
+                    notes.append(r'$^*$Star has bimodal mass and age posteriors. See Table~\ref{tab:bimodal} for each individual solution.')
+                if notes:
+                    fout.write(r'\begin{flushleft}' + '\n' +
+                               r'\textbf{Notes:} ' + '\n'.join(notes) + '\n' +
+                               r'\end{flushleft}' + '\n')
             if is_last and show_secondary_note:
                 fout.write(r'\begin{flushleft}' + '\n' +
                            r'\textbf{Note:} *When the secondary star is a bound companion, the initial metallicity, age, \textit{V}-band extinction, and distance are fixed to those of the primary star.' + '\n' +
