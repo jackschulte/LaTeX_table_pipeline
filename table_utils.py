@@ -6,102 +6,240 @@ import re
 import ast
 import logging
 import time
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, localcontext
 from http.client import HTTPException
 from urllib.request import urlopen
+
+# every number is quantized inside this context, which is wide enough for the longest value a
+# table holds (a time of conjunction written to eight decimal places) without the default
+# 28-digit precision truncating it
+_DECIMAL_PRECISION = 60
+
+
+def to_decimal(x):
+    '''
+    Turns a number into a Decimal without losing the precision it was written with.
+
+    A string keeps exactly the digits it carries, so a median EXOFASTv2 wrote as '0.04530' stays five
+    decimal places wide; float('0.04530') prints as 0.0453 and would cost the median its last
+    significant figure. A float is converted through repr(), the shortest decimal string that round
+    trips, rather than through Decimal(float), which would expose the whole tail of the binary
+    representation (0.1 becoming 0.1000000000000000055511151231257827).
+
+    Parameters
+    -----------
+    x: the number to convert, as a string, float, int, or Decimal
+
+    Raises
+    -------
+    InvalidOperation
+        If x does not spell a number.
+    '''
+    if isinstance(x, Decimal):
+        return x
+    if isinstance(x, str):
+        return Decimal(x.strip())
+    if isinstance(x, (int, np.integer)):
+        return Decimal(int(x))
+    value = float(x)
+    if not np.isfinite(value):
+        raise InvalidOperation(f'{x!r} is not a finite number.')
+    return Decimal(repr(value))
+
+def is_finite_number(x):
+    '''
+    Whether a value spells a finite number, and so can be written into a table.
+
+    Catches the None and masked entries a catalogue query returns for a missing measurement as well as
+    the NaN and infinity a fit can produce, so that callers can write the '---' filler instead.
+
+    Parameters
+    -----------
+    x: the value to test, of any type
+    '''
+    if x is None or isinstance(x, np.ma.core.MaskedConstant):
+        return False
+    try:
+        to_decimal(x)
+    except (InvalidOperation, ValueError, TypeError):
+        return False
+    return True
+
+def decimal_places(x):
+    '''
+    Counts the digits a number carries after the decimal point when it is written positionally.
+
+    This is the precision of a number as written rather than as valued, so it is only exact for a
+    number passed as a string: '1.50' has two decimal places while the float 1.50 has one, since the
+    trailing zero is gone by the time Python has parsed it.
+
+    Parameters
+    -----------
+    x: the number to measure, as a string, float, int, or Decimal
+    '''
+    return max(-to_decimal(x).as_tuple().exponent, 0)
+
+def format_to_decimals(x, decimals):
+    '''
+    Writes a number positionally with exactly the given number of digits after the decimal point.
+
+    Trailing zeros are kept, so a value rounded to three decimal places always shows three of them,
+    and half-way cases round away from zero (0.0625 to three decimals is 0.063) rather than to the
+    nearest even digit as numpy and Python's own round() do.
+
+    Parameters
+    -----------
+    x: the number to write, as a string, float, int, or Decimal
+    decimals: the number of digits to write after the decimal point
+    '''
+    decimals = max(int(decimals), 0)
+    with localcontext() as context:
+        context.prec = _DECIMAL_PRECISION
+        quantized = to_decimal(x).quantize(Decimal(1).scaleb(-decimals), rounding=ROUND_HALF_UP)
+    if not quantized:
+        quantized = quantized.copy_abs() # so that a small negative value is written as 0.00, not -0.00
+    return format(quantized, 'f')
+
+def format_sig_figs(x, num_sig_figs):
+    '''
+    Writes a number positionally to a fixed number of significant figures, keeping trailing zeros.
+
+    Unlike round_sig_figs, which reports the shortest string that carries the rounded value, this keeps
+    the zeros that state the precision: 6.2 to three significant figures is '6.20'. Use it where the
+    result sets the precision that an uncertainty then has to match.
+
+    Parameters
+    -----------
+    x: the number to write
+    num_sig_figs: the number of significant figures to keep
+    '''
+    value = to_decimal(x)
+    if not value:
+        return format_to_decimals(value, num_sig_figs - 1)
+    with localcontext() as context:
+        context.prec = _DECIMAL_PRECISION
+        exponent = value.adjusted() - num_sig_figs + 1
+        rounded = value.quantize(Decimal(1).scaleb(exponent), rounding=ROUND_HALF_UP)
+    return format(rounded, 'f')
 
 def remove_sci_notation(x):
     '''
     Removes scientific notation from a number and returns it as a string.
-    
+
+    A number passed as a string keeps exactly the digits it carries, so that a value read out of a file
+    is written with the precision it was recorded with. A float is written with the shortest digits
+    that round trip, which drops any trailing zero the number no longer remembers.
+
     Parameters
     -----------
     x: the number to remove scientific notation from
     '''
+    if isinstance(x, str):
+        try:
+            return format(to_decimal(x), 'f')
+        except InvalidOperation:
+            return x
     return np.format_float_positional(x, trim='-')
 
 def round_sig_figs(x, num_sig_figs):
     '''
     Rounds a number to a specified number of significant figures.
 
+    The result is always positional: '{:g}' alone switches to scientific notation for a number below
+    1e-5 or above the requested number of figures, which would put an 'e-06' into the table.
+
+    Trailing zeros are dropped, so 6.2 to three significant figures comes back as '6.2'. Where the
+    precision has to be stated rather than merely carried, as for a value an uncertainty is written
+    alongside, use format_sig_figs instead.
+
     Parameters
     -----------
     x: the number to round
     num_sig_figs: the number of significant figures to round to
     '''
-    return '{:g}'.format(float('{:.{p}g}'.format(x, p=num_sig_figs)))
+    return remove_sci_notation(float('{:.{p}g}'.format(float(x), p=num_sig_figs)))
 
-def robust_decimal_errors(val, up_err, low_err):
+def _decimals_showing(decimals, *values):
     '''
-    Ensures that the uncertainties have at least as many positions behind the decimal as the value itself.
+    Widens a number of decimal places until every non-zero value given still shows a digit.
+
+    A value that is small enough to round away to zero at the precision asked for says nothing at all:
+    an uncertainty printed as '0.0' claims a measurement was exact. Where that would happen the
+    precision is widened to the place of the value's leading significant figure, which is the fewest
+    decimal places that keep it, and the widening is logged so that the mismatch is visible.
+
+    Parameters
+    -----------
+    decimals: the number of decimal places asked for
+    values: the values that have to survive being written at that precision
+    '''
+    widened = decimals
+    for value in values:
+        number = to_decimal(value)
+        if not number:
+            continue # an uncertainty of exactly zero is meant to be written as zero
+        if number.copy_abs() < Decimal(5).scaleb(-widened - 1): # it would round to zero
+            widened = -number.adjusted()
+    if widened != decimals:
+        logging.warning(f'{values} cannot be written at {decimals} decimal places without an '
+                        f'uncertainty rounding away to zero, so {widened} are used instead. The value '
+                        'was probably rounded more coarsely than its uncertainty.')
+    return widened
+
+def robust_decimal_errors(val, up_err, low_err, decimals=None):
+    '''
+    Writes a value and its uncertainties to the same number of decimal places.
+
+    The value sets the precision: both uncertainties are rounded to the number of decimal places the
+    value is written with, so that the three numbers line up and no trailing zero is dropped from any
+    of them. Pass the numbers as strings, as they are read out of an EXOFASTv2 median file, to keep
+    the precision EXOFASTv2 chose for them; passing floats loses every trailing zero before this
+    function ever sees the number.
+
+    If the value was written coarsely enough that an uncertainty would round away to zero, the
+    precision is widened until the uncertainty keeps its leading digit and the value is padded to
+    match, since an uncertainty of zero states something that was never measured.
 
     Parameters
     -----------
     val: the value to round
     up_err: the upper error on the value
     low_err: the lower error on the value
+    decimals: the number of decimal places to write all three with. Taken from the precision of the
+        value when it is None, which is what a median read as a string already carries.
     '''
-    val_str = str(remove_sci_notation(val))
-    up_err_str = str(remove_sci_notation(up_err))
-    low_err_str = str(remove_sci_notation(low_err))
+    if decimals is None:
+        decimals = decimal_places(val)
+    decimals = _decimals_showing(decimals, up_err, low_err)
+    return (format_to_decimals(val, decimals),
+            format_to_decimals(up_err, decimals),
+            format_to_decimals(low_err, decimals))
 
-    if '.' in val_str:
-        val_decimal_places = len(val_str.split('.')[1])
-    else:
-        val_decimal_places = 0
+def format_value_and_error(val, err, decimals=None):
+    '''
+    Writes a value and its symmetric uncertainty to the same number of decimal places.
 
-    if '.' in low_err_str:
-        low_err_decimal_places = len(low_err_str.split('.')[1])
-    else:
-        low_err_decimal_places = 0
+    The symmetric case of robust_decimal_errors, for a catalogue value quoted with a single error.
 
-    if '.' in up_err_str:
-        up_err_decimal_places = len(up_err_str.split('.')[1])
-    else:
-        up_err_decimal_places = 0
-    
-    if val_decimal_places > 0:
-        if low_err_decimal_places < val_decimal_places:
-            if '.' not in low_err_str:
-                low_err_str += '.'
-            low_err_str = low_err_str + '0' * (val_decimal_places - low_err_decimal_places)
-        if up_err_decimal_places < val_decimal_places:
-            if '.' not in up_err_str:
-                up_err_str += '.'
-            up_err_str = up_err_str + '0' * (val_decimal_places - up_err_decimal_places)
-    
-    if low_err_decimal_places > 0:
-        if low_err_decimal_places < up_err_decimal_places: # pad zeros to the lower error if it has fewer decimal places than the upper error
-            if '.' not in low_err_str:
-                low_err_str += '.'
-            low_err_str = low_err_str + '0' * (up_err_decimal_places - low_err_decimal_places)
-    if up_err_decimal_places > 0:
-        if up_err_decimal_places < low_err_decimal_places:
-            if '.' not in up_err_str:
-                up_err_str += '.'
-            up_err_str = up_err_str + '0' * (low_err_decimal_places - up_err_decimal_places)
-
-    # Final check to remove trailing zeros and ensure same number of decimal places in errors
-    if '.' in low_err_str:
-        low_err_decimal_places = len(low_err_str.split('.')[1])
-    if '.' in up_err_str:
-        up_err_decimal_places = len(up_err_str.split('.')[1])
-    if low_err_decimal_places != up_err_decimal_places:
-        while (low_err_decimal_places > up_err_decimal_places) and (low_err_str[-1] == '0'):
-            low_err_str = low_err_str[:-1]
-            low_err_decimal_places -= 1
-        while (up_err_decimal_places > low_err_decimal_places) and (up_err_str[-1] == '0'):
-            up_err_str = up_err_str[:-1]
-            up_err_decimal_places -= 1
-
-    if val_decimal_places == 1 and low_err_decimal_places == 0 and up_err_decimal_places == 0:
-        val = int(val) # to remove trailing zeros
-        val_str = str(val)
-
-    return val_str, up_err_str, low_err_str
+    Parameters
+    -----------
+    val: the value to round
+    err: the error on the value
+    decimals: the number of decimal places to write both with. Taken from the precision of the value
+        when it is None.
+    '''
+    val_str, err_str, _ = robust_decimal_errors(val, err, err, decimals=decimals)
+    return val_str, err_str
 
 def grab_medians(path, file_prefix, bimodal=False):
     '''
     Collects median values from EXOFASTv2 output files at the defined path.
+
+    The median value and the two uncertainties are returned as strings holding exactly the digits
+    EXOFASTv2 wrote, with any scientific-notation exponent already folded in. Reading them as numbers
+    would throw away the precision the file states: a median of '0.04530' would come back as 0.0453
+    and the table would lose the last significant figure EXOFASTv2 chose to report. Callers that want
+    to compute with a value rather than print it should call float() on it themselves.
 
     Parameters
     -----------
@@ -111,45 +249,74 @@ def grab_medians(path, file_prefix, bimodal=False):
     '''
 
     median_names= ['parname', 'median_value', 'upper_error', 'lower_error', 'scinot']
-    if bimodal == False:
-        medians = pd.read_csv(path + file_prefix + '.median.csv', names=median_names, header=None, skiprows=1)
-    else:
-        medians = pd.read_csv(path + file_prefix + '.csv', names=median_names, header=None, skiprows=1)
+    suffix = '.csv' if bimodal else '.median.csv'
+    medians = pd.read_csv(path + file_prefix + suffix, names=median_names, header=None, skiprows=1,
+                          dtype=str)
+    for column in median_names:
+        medians[column] = medians[column].str.strip()
 
     medians_corrected = medians.copy()
-    for i in range(len(medians_corrected)):
-        median_corrections = median_scinot_corrections(medians, medians_corrected.parname[i])
-        median_corrections = [float(x) for x in median_corrections]
-        medians_corrected.loc[i, 'median_value'] = median_corrections[0]
-        medians_corrected.loc[i, 'upper_error'] = median_corrections[1]
-        medians_corrected.loc[i, 'lower_error'] = median_corrections[2]
+    for i in medians.index:
+        exponent = _scinot_exponent(medians.scinot[i])
+        for column in ('median_value', 'upper_error', 'lower_error'):
+            medians_corrected.loc[i, column] = _apply_exponent(medians[column][i], exponent)
     return medians_corrected
+
+def _scinot_exponent(scinot):
+    '''
+    Reads the exponent out of the scientific-notation column of an EXOFASTv2 median file.
+
+    The column holds a LaTeX fragment such as '\\times 10^{-10}' for the parameters EXOFASTv2 factors a
+    power of ten out of, and nothing at all for the rest.
+
+    Parameters
+    -----------
+    scinot: the contents of the column, which is NaN where the parameter has no exponent
+    '''
+    if not isinstance(scinot, str):
+        return 0
+    exp_search = re.findall(r'\\times 10\^{(.*)}', scinot)
+    return int(exp_search[0]) if exp_search else 0
+
+def _apply_exponent(value, exponent):
+    '''
+    Multiplies a number written as a string by a power of ten, keeping every digit it was written with.
+
+    Shifting the decimal point rather than multiplying by a float keeps the significant figures exact,
+    so a bolometric flux of '5.40' with an exponent of -10 becomes '0.000000000540' and keeps the
+    trailing zero that states its precision.
+
+    Parameters
+    -----------
+    value: the number to scale, as a string
+    exponent: the power of ten to apply
+    '''
+    try:
+        number = to_decimal(value)
+    except (InvalidOperation, ValueError, TypeError):
+        return value # not a number, so leave it for the caller to notice
+    if exponent == 0:
+        return format(number, 'f')
+    with localcontext() as context:
+        context.prec = _DECIMAL_PRECISION
+        return format(number.scaleb(exponent), 'f')
 
 def median_scinot_corrections(median, parname):
     '''
-    Multiplies parameters in the EXOFASTv2 median table by the scientific notation exponent.
+    Applies the scientific-notation exponent of a parameter in the EXOFASTv2 median table to its value
+    and uncertainties, returning all three as strings with their digits intact.
 
+    Parameters
+    -----------
     median: pandas DataFrame for median table
-    param: input parameter name
+    parname: input parameter name
     '''
 
-    scinot = median.scinot[median.parname==parname].iloc[0]
+    row = median[median.parname == parname].iloc[0]
+    exponent = _scinot_exponent(row.scinot)
+    return tuple(_apply_exponent(row[column], exponent)
+                 for column in ('median_value', 'upper_error', 'lower_error'))
 
-    if type(scinot) == str:
-        exp_search = re.findall(r'\\times 10\^{(.*)}', scinot)
-        exponent = int(exp_search[0])
-    else:
-        exponent = 0
-
-    param = median.median_value[median.parname==parname].iloc[0]
-    param_corrected = param * 10**exponent
-
-    uperr = median.upper_error[median.parname==parname].iloc[0]
-    uperr_corrected = uperr * 10**exponent
-
-    lowerr = median.lower_error[median.parname==parname].iloc[0]
-    lowerr_corrected = lowerr * 10**exponent
-    return robust_decimal_errors(param_corrected, uperr_corrected, lowerr_corrected)
 
 def write(param_arr,file):
     for ii in param_arr:

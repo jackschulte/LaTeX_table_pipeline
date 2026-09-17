@@ -8,25 +8,42 @@ from astropy.coordinates import Angle
 from grab_tres_vsini import grab_tres_vsini
 import re
 import logging
-from table_utils import round_sig_figs, write
+from table_utils import (format_sig_figs, format_to_decimals, format_value_and_error,
+                         is_finite_number, remove_sci_notation, write)
 
-def gen_lit_str(array, value, error=None):
+def gen_lit_str(array, value, error=None, decimals=None):
     '''
     Appends a string version of the literature value obtained via query to the appropriate list of strings
+
+    A value and its error are written to the same number of decimal places, so that neither drops a
+    trailing zero the other still shows: a magnitude of 9.95 quoted to three decimal places is written
+    as 9.950 beside its error of 0.024, and an error of 0.02 beside a value quoted to four places is
+    written as 0.0200. Where an error is too small to survive being rounded to the value's precision it
+    keeps enough decimal places to show its leading digit and the value is padded to match, so that a
+    measurement is never reported with an uncertainty of zero.
 
     Parameters
     -----------
     array: the list/array to append the value string to
     value: the value to append to the array
     error: the error on that value, if there is one
+    decimals: the number of decimal places to write the value and its error with. When None the value
+        keeps the precision it already carries, which is what a value that has been written out
+        beforehand, such as a coordinate in h:m:s, needs.
     '''
 
-    if (value == None) or (isinstance(value, np.ma.core.MaskedConstant)):
+    if isinstance(value, str) and not is_finite_number(value):
+        array.append(r'& ' + value + ' ') # already written out, such as a coordinate in h:m:s
+    elif not is_finite_number(value):
         array.append('& --- ') # if the value doesn't exist in the query, add in the filler
-    elif (error == None) or (isinstance(error, np.ma.core.MaskedConstant)):
-        array.append(r'& ' + str(value) + ' ') # if there's no error, only append the value
+    elif not is_finite_number(error):
+        # if there's no error, only append the value
+        value_str = remove_sci_notation(value) if decimals is None else format_to_decimals(value, decimals)
+        array.append(r'& ' + value_str + ' ')
     else:
-        array.append(r'& $' + str(value) + r' \pm ' + str(error) + '$ ') # if there's a value and associated error, append them both
+        # if there's a value and associated error, append them both at a matching precision
+        value_str, error_str = format_value_and_error(value, error, decimals=decimals)
+        array.append(r'& $' + value_str + r' \pm ' + error_str + '$ ')
 
 def add_source(array, source):
     '''
@@ -96,13 +113,8 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
         for ticid in TIC_IDs:
             vsini, vsini_err = grab_tres_vsini(tres_username, tres_password, ticid)
             if vsini and not np.isnan(vsini):
-                vsini_3sigfig = round_sig_figs(vsini, 3)
-                vsini_tres.append(vsini_3sigfig)
-                if '.' in str(vsini_3sigfig):
-                    decimal_places = len(str(vsini_3sigfig).split('.')[1])
-                else:
-                    decimal_places = 0
-                vsini_tres_err.append(round(vsini_err, decimal_places)) # round the vsini error to the same number of decimal places as the vsini
+                vsini_tres.append(vsini)
+                vsini_tres_err.append(vsini_err)
                 
             else:
                 vsini_tres.append(None)
@@ -197,8 +209,8 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
         ra_min = int(ra_angle.hms[1])
         if ra_min < 10:
             ra_min = f'0{ra_min}'
-        ra_sec = round(float(ra_angle.hms[2]), 3)
-        if ra_sec < 10:
+        ra_sec = format_to_decimals(ra_angle.hms[2], 3) # a fixed width, so the column lines up
+        if float(ra_sec) < 10:
             ra_sec = f'0{ra_sec}'
         ra_str = f'{ra_hr}:{ra_min}:{ra_sec}'
         dec = data_gaia['DEJ2000']
@@ -209,8 +221,8 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
         dec_min = abs(int(dec_angle.dms[1]))
         if dec_min < 10:
             dec_min = f'0{dec_min}'
-        dec_sec = abs(round(float(dec_angle.dms[2]), 3))
-        if dec_sec < 10:
+        dec_sec = format_to_decimals(abs(float(dec_angle.dms[2])), 3)
+        if float(dec_sec) < 10:
             dec_sec = f'0{dec_sec}'
         dec_str = f'{dec_deg}:{dec_min}:{dec_sec}'
 
@@ -288,30 +300,36 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
 
         gen_lit_str(ra_arr, ra_str)
         gen_lit_str(dec_arr, dec_str)
-        gen_lit_str(gaia_g_arr, round(float(gaia_g), 3), round(float(gaia_g_err), 3))
-        gen_lit_str(gaia_bp_arr, round(float(gaia_bp), 3), round(float(gaia_bp_err), 3))
-        gen_lit_str(gaia_rp_arr, round(float(gaia_rp), 3), round(float(gaia_rp_err), 3))
-        gen_lit_str(tmag_arr, round(float(TESS_mags[i]), 4), round(float(TESS_mags_err[i]), 4))
-        gen_lit_str(j_2mass_arr, round(float(j_2mass), 3), round(float(j_2mass_err), 3))
-        gen_lit_str(h_2mass_arr, round(float(h_2mass), 3), round(float(h_2mass_err), 3))
-        gen_lit_str(k_2mass_arr, round(float(k_2mass), 3), round(float(k_2mass_err), 3))
-        gen_lit_str(wise1_arr, round(float(wise1), 3), round(float(wise1_err), 3))
-        gen_lit_str(wise2_arr, round(float(wise2), 3), round(float(wise2_err), 3))
-        gen_lit_str(wise3_arr, round(float(wise3), 3), round(float(wise3_err), 3))
+        gen_lit_str(gaia_g_arr, gaia_g, gaia_g_err, decimals=3)
+        gen_lit_str(gaia_bp_arr, gaia_bp, gaia_bp_err, decimals=3)
+        gen_lit_str(gaia_rp_arr, gaia_rp, gaia_rp_err, decimals=3)
+        gen_lit_str(tmag_arr, TESS_mags[i], TESS_mags_err[i], decimals=4)
+        gen_lit_str(j_2mass_arr, j_2mass, j_2mass_err, decimals=3)
+        gen_lit_str(h_2mass_arr, h_2mass, h_2mass_err, decimals=3)
+        gen_lit_str(k_2mass_arr, k_2mass, k_2mass_err, decimals=3)
+        gen_lit_str(wise1_arr, wise1, wise1_err, decimals=3)
+        gen_lit_str(wise2_arr, wise2, wise2_err, decimals=3)
+        gen_lit_str(wise3_arr, wise3, wise3_err, decimals=3)
         if (wise4 is None) or isinstance(wise4, np.ma.core.MaskedConstant):
             gen_lit_str(wise4_arr, None) # a filler cell, so the row stays as wide as the others
         else:
-            gen_lit_str(wise4_arr, round(float(wise4), 3), round(float(wise4_err), 3))
+            gen_lit_str(wise4_arr, wise4, wise4_err, decimals=3)
             wise4_targets += 1
-        gen_lit_str(pmra_arr, round(float(pmra), 3), round(float(pmra_err), 3))
-        gen_lit_str(pmdec_arr, round(float(pmdec), 3), round(float(pmdec_err), 3))
-        gen_lit_str(parallax_arr, round(float(parallax), 4), round(float(parallax_err), 4))
+        gen_lit_str(pmra_arr, pmra, pmra_err, decimals=3)
+        gen_lit_str(pmdec_arr, pmdec, pmdec_err, decimals=3)
+        gen_lit_str(parallax_arr, parallax, parallax_err, decimals=4)
+        # whichever catalogue it came from, the projected rotational velocity is quoted to three
+        # significant figures and its error is written to match that precision
+        vsini, vsini_err = None, None # an unrecognised vsini_type leaves a filler cell, keeping the row's width
         if vsini_type == 'gaia':
-            gen_lit_str(vsini_arr, vbroad, vbroad_err)
+            vsini, vsini_err = vbroad, vbroad_err
         elif vsini_type == 'tres':
-            gen_lit_str(vsini_arr, vsini_tres[i], vsini_tres_err[i])
+            vsini, vsini_err = vsini_tres[i], vsini_tres_err[i]
         elif vsini_type == 'external':
-            gen_lit_str(vsini_arr, vsini_external[i][0], vsini_external[i][1])
+            vsini, vsini_err = vsini_external[i][0], vsini_external[i][1]
+        if is_finite_number(vsini):
+            vsini = format_sig_figs(vsini, 3)
+        gen_lit_str(vsini_arr, vsini, vsini_err)
 
     if add_source_column == True:
         # adding sources to the rows

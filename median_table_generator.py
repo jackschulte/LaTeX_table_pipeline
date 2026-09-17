@@ -5,47 +5,42 @@ import numpy as np
 import os
 import pandas as pd
 import re
-from table_utils import grab_medians, remove_sci_notation, robust_decimal_errors, round_sig_figs, write
+from table_utils import (grab_medians, is_finite_number, remove_sci_notation, robust_decimal_errors,
+                         round_sig_figs, write)
 
 def format_value_with_errors(val, up_err, low_err):
     '''
     Format a value and its asymmetric uncertainties so:
     - scientific notation is removed
-    - the uncertainties have the same number of decimal places as the value
+    - the uncertainties are written to the same number of decimal places as the value
+
+    The value governs the precision: both uncertainties are rounded to the number of decimal places the
+    value is written with, so that the three numbers line up and none of them loses a trailing zero. The
+    three arrive as the strings grab_medians read out of the EXOFASTv2 median file, which carry exactly
+    the digits EXOFASTv2 chose to report; turning them into floats first would drop every trailing zero
+    and with it the precision the fit reported.
 
     Parameters
     -----------
     val: the value to format
     up_err: the upper uncertainty on the value
     low_err: the lower uncertainty on the value
+
+    Returns
+    -------
+    tuple[str, str | None, str | None]
+        The value and its two uncertainties as strings. A value that is missing or not a number comes
+        back as the '---' filler with no uncertainties, and a value whose uncertainties are missing
+        comes back on its own, both signalled by a None in place of each uncertainty.
     '''
-    try:
-        val_f = float(val)
-    except Exception:
+    if not is_finite_number(val):
         return '---', None, None
 
-    if not np.isfinite(val_f):
-        return '---', None, None
-
-    # try to coerce errors to floats; if they are not finite, treat as missing
-    try:
-        up_f = float(up_err)
-    except Exception:
-        up_f = np.nan
-    try:
-        low_f = float(low_err)
-    except Exception:
-        low_f = np.nan
-
-    if (not np.isfinite(up_f)) or (not np.isfinite(low_f)):
+    if not (is_finite_number(up_err) and is_finite_number(low_err)):
         # No reliable errors: just return the value without sci notation
-        val_str = remove_sci_notation(val_f)
-        return val_str, None, None
+        return remove_sci_notation(val), None, None
 
-    # Use robust_decimal_errors to line up decimal places and remove sci notation
-    val_str, up_str, low_str = robust_decimal_errors(val_f, up_f, low_f)
-
-    return val_str, up_str, low_str
+    return robust_decimal_errors(val, up_err, low_err)
 
 def grab_priors(file_prefix, path):
     '''
@@ -151,7 +146,7 @@ def make_median_string(medians, param, array, star_index=0):
             array.append('& $' + val_str + '$ ')
             return
 
-        if float(uperr) == float(loerr):
+        if up_str == low_str: # compared as written, so that errors that round alike share one \pm
             errstring = r' \pm ' + up_str
         else:
             errstring = r'^{+' + up_str + '}_{-' + low_str + '}'
@@ -608,16 +603,36 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
             declared = rows[declares(rows)]
             return (declared if len(declared) else rows)[column].iloc[0]
 
+        def gaussian_prior_cell(mean, stdev, name, prefix):
+            '''Writes a Gaussian prior as a table cell, to five significant figures, or the '---' filler.
+
+            A prior whose mean or standard deviation is missing is left blank rather than written as
+            'nan', which is what happens when a prior file links a variable to a row that is not there
+            (see grab_priors).
+            '''
+            if not (is_finite_number(mean) and is_finite_number(stdev)):
+                logging.warning(f'{prefix} has no usable {name} prior (mean {mean}, standard deviation '
+                                f'{stdev}); leaving that cell blank.')
+                return r'& --- '
+            return r'& $\mathcal{G}$[' + round_sig_figs(mean, 5) + r', ' + round_sig_figs(stdev, 5) + r'] '
+
         for ii in range(len(target_list)):
             priortable = grab_priors(file_prefix_list[ii], path)
             parallax_prior_mean = prior_value(priortable, 'meanvalue', 'parallax')
             parallax_prior_stdev = prior_value(priortable, 'stdev', 'parallax')
-            parallax_prior.append(r'& $\mathcal{G}$[' + round_sig_figs(parallax_prior_mean, 5) + r', ' + round_sig_figs(parallax_prior_stdev, 5) + r'] ')
+            parallax_prior.append(gaussian_prior_cell(parallax_prior_mean, parallax_prior_stdev,
+                                                      'parallax', file_prefix_list[ii]))
             metallicity_prior_mean = prior_value(priortable, 'meanvalue', 'feh')
             metallicity_prior_stdev = prior_value(priortable, 'stdev', 'feh')
-            metallicity_prior.append(r'& $\mathcal{G}$[' + round_sig_figs(metallicity_prior_mean, 5) + r', ' + round_sig_figs(metallicity_prior_stdev, 5) + r'] ')
+            metallicity_prior.append(gaussian_prior_cell(metallicity_prior_mean, metallicity_prior_stdev,
+                                                         'metallicity', file_prefix_list[ii]))
             extinction_prior_upperbound = prior_value(priortable, 'up_bound', 'Av', kind='uniform')
-            extinction_prior.append(r'& $\mathcal{U}$[0, ' + round_sig_figs(extinction_prior_upperbound, 5) + r'] ')
+            if is_finite_number(extinction_prior_upperbound):
+                extinction_prior.append(r'& $\mathcal{U}$[0, ' + round_sig_figs(extinction_prior_upperbound, 5) + r'] ')
+            else:
+                logging.warning(f'{file_prefix_list[ii]} has no usable V-band extinction prior '
+                                f'(upper bound {extinction_prior_upperbound}); leaving that cell blank.')
+                extinction_prior.append(r'& --- ')
 
             # finding the dilution term. A dilution variable turns up several times in a prior file: under
             # '# intializing linked parameters' with only a starting value, once where its prior is
@@ -636,8 +651,8 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
                 logging.warning(f'{file_prefix_list[ii]} fits dilution but declares no Gaussian dilution prior; '
                                 'leaving the dilution prior blank.')
             if dilute_bool[ii]:
-                dilution_prior.append(r'& $\mathcal{G}$[' + round_sig_figs(dilution_prior_mean, 5) + r', ' + remove_sci_notation(float(round_sig_figs(dilution_prior_stdev, 5))) + r'] ')
-                # above line should be cleaned up in a future version. Maybe make a new function that removes scientific notation and sets sig figs for all numbers
+                dilution_prior.append(gaussian_prior_cell(dilution_prior_mean, dilution_prior_stdev,
+                                                          'dilution', file_prefix_list[ii]))
             else:
                 dilution_prior.append(r'& --- ')
 

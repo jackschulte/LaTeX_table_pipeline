@@ -6,7 +6,8 @@ import pandas as pd
 from astroquery.vizier import Vizier
 from astropy.coordinates import Angle
 import logging
-from table_utils import _extract_grid_rows, fetch_exofop_page, grab_medians, remove_sci_notation, round_sig_figs, write
+from table_utils import (_extract_grid_rows, decimal_places, fetch_exofop_page, format_sig_figs,
+                         format_to_decimals, grab_medians, is_finite_number, write)
 
 # EXOFASTv2 SED bandnames that map onto the Gaia magnitude rows of the secondary star table
 SECONDARY_GAIA_BANDS = {
@@ -243,7 +244,14 @@ def _round_with_errors(value, up_err, low_err, num_sig_figs=2):
     """Round a value and its uncertainties so the uncertainties carry a set number of significant figures.
 
     The value and both uncertainties are written to the same number of decimal places, which is set
-    by the smaller of the two uncertainties.
+    by the smaller of the two uncertainties. Trailing zeros count towards the significant figures, so
+    an uncertainty of 0.20 keeps two decimal places rather than being cut back to 0.2, which would
+    state one significant figure where two were asked for, and the value is padded to the same width
+    rather than ending wherever its own digits happen to run out.
+
+    Unlike the median table, which takes its precision from the value EXOFASTv2 wrote, these numbers
+    are means and standard deviations computed here from ExoFOP measurements, so the value carries no
+    precision of its own and the uncertainties have to set it.
 
     Parameters
     ----------
@@ -261,22 +269,19 @@ def _round_with_errors(value, up_err, low_err, num_sig_figs=2):
     tuple[str, str, str]
         The rounded value and uncertainties, as strings.
     """
-    def decimal_places(err):
-        # the number of decimal places left once the uncertainty is rounded to num_sig_figs
-        # significant figures. Trailing zeros are dropped along the way, so an uncertainty
-        # reported to one significant figure does not gain a digit it never had.
-        if (err is None) or (not np.isfinite(err)) or (err == 0):
+    def places_needed(err):
+        # the number of decimal places an uncertainty needs in order to show num_sig_figs significant
+        # figures, counting the trailing zeros that state the precision
+        if (err is None) or (not is_finite_number(err)) or (float(err) == 0):
             return None
-        err_str = remove_sci_notation(float(round_sig_figs(err, num_sig_figs)))
-        return len(err_str.split('.')[1]) if '.' in err_str else 0
+        return decimal_places(format_sig_figs(err, num_sig_figs))
 
-    places = [p for p in (decimal_places(up_err), decimal_places(low_err)) if p is not None]
+    places = [p for p in (places_needed(up_err), places_needed(low_err)) if p is not None]
     decimals = max(places) if places else 3 # fall back to the 3 decimals used for magnitudes elsewhere
 
-    def as_string(x):
-        return '{:.{p}f}'.format(np.round(x, decimals), p=max(decimals, 0))
-
-    return as_string(value), as_string(up_err), as_string(low_err)
+    return (format_to_decimals(value, decimals),
+            format_to_decimals(up_err, decimals),
+            format_to_decimals(low_err, decimals))
 
 
 def gen_secondary_str(array, value, up_err=None, low_err=None):
@@ -304,7 +309,7 @@ def gen_secondary_str(array, value, up_err=None, low_err=None):
 
     if (up_err is None) or (not np.isfinite(float(up_err))) or (not np.isfinite(float(low_err))):
         # no reliable errors, so the value is written on its own
-        array.append('& $' + remove_sci_notation(np.round(float(value), 3)) + '$ ')
+        array.append('& $' + format_to_decimals(value, 3) + '$ ')
         return
 
     val_str, up_str, low_str = _round_with_errors(float(value), float(up_err), float(low_err))
