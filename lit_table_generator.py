@@ -61,7 +61,8 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
               add_source_column=False, grab_mags_from_sedfile=True, max_targets_per_table=5, MNRAS=False):
     '''
     Generates a 'literature' table, using photometric and astrometric parameters from Gaia, 2MASS, and WISE. Optionally
-    grabs vsini measurements from TRES. WARNING: Collecting TRES vsini measurements will increase runtime by ~4 min.
+    grabs vsini measurements from TRES, which adds a few seconds per target to the runtime while the TRES site is
+    answering, and up to several minutes more while it waits out an outage.
 
     Parameters
     -----------
@@ -110,8 +111,7 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
     vsini_tres = []
     vsini_tres_err = []
     if vsini_type == 'tres':
-        for ticid in TIC_IDs:
-            vsini, vsini_err = grab_tres_vsini(tres_username, tres_password, ticid)
+        for vsini, vsini_err in grab_tres_vsini(tres_username, tres_password, TIC_IDs):
             if vsini and not np.isnan(vsini):
                 vsini_tres.append(vsini)
                 vsini_tres_err.append(vsini_err)
@@ -435,28 +435,33 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
                        caption + '\n')
             if is_first:
                 fout.write(r'\label{tab:lit}' + '\n')
-            fout.write(r'\resizebox{\textwidth}{!}{' + '\n')
+            fout.write(r'\scriptsize' + '\n' +
+                       # booktabs rules, so the table needs \usepackage{booktabs} in the document
+                       # preamble; the columns are set tighter than the LaTeX default so that a
+                       # table of five targets still fits the width of the page
+                       r'\setlength{\tabcolsep}{3pt}' + '\n')
 
             if add_source_column == True:
                 fout.write(r'\begin{tabular}{ll' + colstring + '}'+'\n'+
-                    r'\hline' + '\n' +
+                    r'\toprule' + '\n' +
                     r'& ' + namestring + r' & Source \\' +'\n'+
                     r'\multicolumn{' + str(n_chunk + 3) + r'}{l}{\textbf{Other identifiers}:} \\' + '\n' +
                     r'& \tess Input Catalog' + tic_id_str + r' & \\' + '\n' +
                     r'& TYCHO-2' + tycho_id_str + r' & \\'  + '\n' +
                     r'& 2MASS' + twomass_id_str + r' & \\' + '\n' +
                     r'& Gaia DR3' + gaia_id_str + r' & \\' + '\n' +
-                    r'\hline' + '\n' +
+                    r'\midrule' + '\n' +
                     r'\multicolumn{' + str(n_chunk + 3) + r'}{l}{\textbf{Astrometric Parameters}:} \\' + '\n')
             else:
                 fout.write(r'\begin{tabular}{ll' + colstring + '}'+'\n'+
-                    r'\hline' + '\n' +
+                    r'\toprule' + '\n' +
                     r'& ' + namestring + r'\\' +'\n'+
                     r'\multicolumn{' + str(n_chunk + 2) + r'}{l}{\textbf{Other identifiers}:} \\' + '\n' +
                     r'& \tess Input Catalog' + tic_id_str + r'\\' + '\n' +
                     r'& TYCHO-2' + tycho_id_str + r'\\'  + '\n' +
                     r'& 2MASS' + twomass_id_str + r'\\' + '\n' +
-                    r'\hline' + '\n' +
+                    r'& Gaia DR3' + gaia_id_str + r'\\' + '\n' +
+                    r'\midrule' + '\n' +
                     r'\multicolumn{' + str(n_chunk + 2) + r'}{l}{\textbf{Astrometric Parameters}:} \\' + '\n')
 
             write(_row_slice(ra_arr, sl), fout)
@@ -479,9 +484,8 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
             if wise4_targets > 0:
                 write(_row_slice(wise4_arr, sl), fout)
 
-            fout.write(r'\hline' + '\n' +
-                       r'\end{tabular}' + '\n' +
-                       r'} % end resizebox' + '\n')
+            fout.write(r'\bottomrule' + '\n' +
+                       r'\end{tabular}' + '\n')
             if is_last:
                 # the minipage notes block is only used in the final table
                 fout.write(notes)
