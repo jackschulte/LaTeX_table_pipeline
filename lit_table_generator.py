@@ -215,16 +215,13 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
         ra_str = f'{ra_hr}:{ra_min}:{ra_sec}'
         dec = data_gaia['DEJ2000']
         dec_angle = Angle(dec, 'deg')
-        dec_deg = int(dec_angle.dms[0])
-        if abs(dec_deg) < 10:
-            dec_deg = f'0{dec_deg}'
+        dec_sign = '-' if dec_angle.degree < 0 else '' # dms[0] is -0.0 between 0 and -1 deg, so the sign comes from the angle
+        dec_deg = abs(int(dec_angle.dms[0]))
         dec_min = abs(int(dec_angle.dms[1]))
-        if dec_min < 10:
-            dec_min = f'0{dec_min}'
         dec_sec = format_to_decimals(abs(float(dec_angle.dms[2])), 3)
         if float(dec_sec) < 10:
             dec_sec = f'0{dec_sec}'
-        dec_str = f'{dec_deg}:{dec_min}:{dec_sec}'
+        dec_str = f'{dec_sign}{dec_deg:02d}:{dec_min:02d}:{dec_sec}'
 
         # Grabbing the used magnitudes from SED files
         if grab_mags_from_sedfile == True:
