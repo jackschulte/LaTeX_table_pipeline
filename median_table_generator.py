@@ -8,6 +8,11 @@ import re
 from table_utils import (grab_medians, is_finite_number, remove_sci_notation, robust_decimal_errors,
                          round_sig_figs, write)
 
+# The letters EXOFASTv2 gives the planets of a fit, in the order it indexes them: planet 0 is 'b'. These
+# are the 'plabels' of its mkss.pro, and they are what the suffix on a planetary parameter means, so
+# Period_0 is planet b's period and Period_1 is planet c's.
+PLANET_LABELS = 'bcdefghijklmnopqrstuvwxyz'
+
 def format_value_with_errors(val, up_err, low_err):
     '''
     Format a value and its asymmetric uncertainties so:
@@ -158,7 +163,7 @@ def make_median_string(medians, param, array, star_index=0):
 
 def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False, parameters=None,
               probabilities=None, max_targets_per_table=5, secondary_stars=False, host_list=None,
-              star_types=None, MNRAS=False, bimodal_targets=None):
+              star_types=None, MNRAS=False, bimodal_targets=None, multiplanet=False):
     '''
     Generates a median table given the path to EXOFASTv2 output files.
 
@@ -211,6 +216,15 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
         'TOI-3988', 'TOI 3988' and 'toi3988' all name the same star, and a name matching no target is reported. Only
         used for a table of target stars: a bimodal table already gives each solution its own column, and a
         secondary-star table marks its rows with an asterisk of its own.
+    multiplanet: set to True to give every planet of a multi-planet system its own column. The system name spans its
+        planets' columns with a rule beneath it, a row of planet letters (b, c, d, ...) runs below the names, and the
+        stellar parameters and priors, which belong to the system rather than to any one planet, are written once
+        across the group. The planets of each fit are counted from its median file, where EXOFASTv2 indexes them as
+        Period_0 for planet b, Period_1 for planet c, and so on. Pass a dict of target name to planet count
+        ({'TOI-1111': 2}) to set the counts by hand instead; a target the dict does not name keeps the planets found
+        in its file. max_targets_per_table counts columns, so a table of a two-planet and a three-planet system fills
+        a limit of five. Cannot be combined with bimodal, which groups the columns by solution instead, and does
+        nothing for a secondary-star table, which holds no planetary parameters.
     '''
 
     # `secondary_stars` picks which star of the fit the table is built from: False keeps the target star,
@@ -219,6 +233,16 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     fixed_star_index = int(secondary_stars) if (secondary and secondary_stars is not True) else None
     if fixed_star_index is not None and fixed_star_index < 1:
         raise ValueError(f'secondary_stars must be True, False, or a star index of 1 or more, not {secondary_stars!r}.')
+
+    # `multiplanet` gives each planet of a system its own column, which is the same column grouping a bimodal
+    # table uses for its solutions; the two cannot both own the grouping
+    if multiplanet and bimodal:
+        raise ValueError('multiplanet and bimodal both group the columns of a table, one by planet and the other '
+                         'by solution, so they cannot be used together.')
+    if multiplanet and secondary:
+        logging.warning('multiplanet does nothing for a secondary-star table, which holds only stellar parameters; '
+                        'the columns are left one to a star.')
+        multiplanet = False
 
     def _normalize_param_name(name):
         return re.sub(r'[^a-z0-9]', '', str(name).lower())
@@ -420,7 +444,7 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
 
     # the planetary parameters of a fit belong to the target star, so a secondary-star table holds
     # nothing but the stellar parameters
-    parameter_specs = stellar_parameter_specs if secondary else stellar_parameter_specs + planetary_parameter_specs
+    planetary_specs = [] if secondary else planetary_parameter_specs
 
     # Setting up to save the table as a .tex file
 
@@ -480,13 +504,60 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
         if probability_cells is not None:
             probability_cells = [probability_cells[ii] for ii in kept]
 
-    # A target whose mass and age posteriors are bimodal is marked with a superscript asterisk on its name, and a
-    # note beneath the last table sends the reader to the bimodal table for the two solutions. The names are matched
-    # loosely so that the spelling used here need not match target_list character for character.
     def _normalize_target_name(name):
         '''Reduces a target name to letters and digits, so 'TOI-3988', 'TOI 3988' and 'toi3988' all match.'''
         return re.sub(r'[^a-z0-9]', '', str(name).lower())
 
+    # Giving every planet of a multi-planet system its own column. The columns are expanded in place, so that a
+    # two-planet system appears twice over, once per planet; everything downstream then works a column at a time as
+    # it does for a single-planet fit, and `planet_groups` records which columns belong to the same system so that
+    # the header can span them and the stellar parameters can be written once across them.
+    planet_indices = [0] * len(file_prefix_list) # the planet of its fit that each column is read from
+    planet_groups = None
+    if multiplanet:
+        # as with the secondary stars, a suffix on its own does not count: EXOFASTv2 indexes the transit, telescope
+        # and limb darkening parameters too, so only the suffixes carried by one of the planetary parameters do
+        planetary_keys = {median_key for _, median_key, _ in planetary_parameter_specs}
+
+        def _planet_count(medians):
+            '''Returns how many planets a median table holds, read off the suffixes of its planetary parameters.'''
+            found = set()
+            for parname in medians.parname.astype(str):
+                key, _, index = parname.rpartition('_')
+                if key in planetary_keys and index.isdigit():
+                    found.add(int(index))
+            # the planets are indexed from zero without gaps, so the count is one past the highest index
+            return max(found) + 1 if found else 1
+
+        given = multiplanet if isinstance(multiplanet, dict) else {}
+        given_counts = {_normalize_target_name(name): count for name, count in given.items()}
+        given_spellings = {_normalize_target_name(name): str(name) for name in given}
+        unmatched_counts = set(given_counts) - {_normalize_target_name(name) for name in target_list}
+        if unmatched_counts:
+            logging.warning('multiplanet gives planet counts for ' +
+                            ', '.join(sorted(given_spellings[key] for key in unmatched_counts)) +
+                            ', which match no target in this table; check the spelling against target_list.')
+
+        expanded, planet_groups = [], []
+        for ii, name in enumerate(target_list):
+            count = given_counts.get(_normalize_target_name(name), _planet_count(median_tables[ii]))
+            count = max(int(count), 1)
+            if count > len(PLANET_LABELS):
+                logging.warning(f'{name} has {count} planets, more than there are letters to name them; only the '
+                                f'first {len(PLANET_LABELS)} are written.')
+                count = len(PLANET_LABELS)
+            planet_groups.append([len(expanded) + offset for offset in range(count)])
+            expanded.extend((ii, planet) for planet in range(count))
+
+        target_list = [target_list[ii] for ii, _ in expanded]
+        file_prefix_list = [file_prefix_list[ii] for ii, _ in expanded]
+        median_tables = [median_tables[ii] for ii, _ in expanded]
+        star_indices = [star_indices[ii] for ii, _ in expanded]
+        planet_indices = [planet for _, planet in expanded]
+
+    # A target whose mass and age posteriors are bimodal is marked with a superscript asterisk on its name, and a
+    # note beneath the last table sends the reader to the bimodal table for the two solutions. The names are matched
+    # loosely so that the spelling used here need not match target_list character for character.
     bimodal_names = {_normalize_target_name(name): str(name) for name in (bimodal_targets or [])}
     if bimodal_names and bimodal:
         logging.warning('bimodal_targets was given for a bimodal table, where every column already holds one '
@@ -553,6 +624,10 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
         name = str(target_list[index])
         return _strip_solution_marker(name) or name
 
+    def _planet_label(index):
+        '''Returns the letter EXOFASTv2 gives the planet held by column `index`: 'b' for its first planet.'''
+        return PLANET_LABELS[planet_indices[index]]
+
     def _solution_label(index):
         '''Returns 'Low-mass solution' or 'High-mass solution' for column `index`, or '' if it is neither.'''
         for candidate in (str(target_list[index]), str(file_prefix_list[index])):
@@ -571,6 +646,8 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
             else:
                 group_index[key] = len(groups)
                 groups.append([ii])
+    elif multiplanet:
+        groups = planet_groups # one group per system, holding that system's planet columns
     else:
         groups = [[ii] for ii in range(n_targets)]
 
@@ -607,9 +684,13 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     for ii in range(len(target_list)):
         medians = median_tables[ii]
 
-        for param_name, median_key, labels in parameter_specs:
-            if _normalize_param_name(param_name) in selected_parameters or _normalize_param_name(median_key) in selected_parameters:
-                make_median_string(medians, median_key, labels, star_index=star_indices[ii])
+        # a stellar parameter is read at the column's star index and a planetary one at its planet index; the two
+        # are the same suffix in the median file, but they count different things
+        for specs, index in ((stellar_parameter_specs, star_indices[ii]),
+                             (planetary_specs, planet_indices[ii])):
+            for param_name, median_key, labels in specs:
+                if _normalize_param_name(param_name) in selected_parameters or _normalize_param_name(median_key) in selected_parameters:
+                    make_median_string(medians, median_key, labels, star_index=index)
 
     # Collecting priors to put at the top of the table (one ' & ...' entry per target so they can be sliced)
     parallax_prior = [] # initializing lists
@@ -710,6 +791,25 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
         cells = arr[1:]
         return arr[:1] + [cells[i] for i in idx]
 
+    def _span_cell(cell, span):
+        '''Rewrites a cell so that it runs across `span` columns, leaving a single-column cell alone.'''
+        if span <= 1:
+            return cell
+        body = cell.strip()
+        if body.startswith('&'):
+            body = body[1:].strip()
+        return r'& \multicolumn{' + str(span) + r'}{c}{' + body + '} '
+
+    def _system_row_slice(arr, chunk_groups):
+        '''Return a table row for a value that belongs to the system rather than to any one of its planets.
+
+        Each group contributes one cell, taken from its first column and spanning the rest, so that a stellar
+        parameter or a prior is stated once per system however many planets the system has. With one column per
+        group, as in every table that is not grouped by planet, this is exactly _row_slice.
+        '''
+        cells = arr[1:]
+        return arr[:1] + [_span_cell(cells[group[0]], len(group)) for group in chunk_groups]
+
     def _write_chunk(fname, chunk_groups, is_first, is_last):
         idx = [i for group in chunk_groups for i in group]
         n_chunk = len(idx)
@@ -717,6 +817,10 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
         if bimodal:
             # one system name per group, spanning that system's solution columns
             namestring = ''.join(r' & \multicolumn{' + str(len(group)) + r'}{c}{' + _system_name(group[0]) + r'}'
+                                 for group in chunk_groups)
+        elif multiplanet:
+            # one system name per group, spanning that system's planet columns
+            namestring = ''.join(r' & \multicolumn{' + str(len(group)) + r'}{c}{' + target_labels[group[0]] + r'}'
                                  for group in chunk_groups)
         else:
             namestring = ''.join(' & ' + target_labels[i] for i in idx)
@@ -749,6 +853,16 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
                        r'\begin{tabular}{ll' + colstring + '}'+'\n'+
                        r'\toprule' + '\n' +
                        r'& ' + namestring + r'\\' +'\n')
+            if multiplanet:
+                # a rule under each system name, marking off the columns it covers, and then the planet each
+                # column holds. The rules are trimmed on both sides so that neighbouring systems stay apart.
+                position = 3 # the first data column, after the symbol and description columns
+                rules = []
+                for group in chunk_groups:
+                    rules.append(r'\cmidrule(lr){' + f'{position}-{position + len(group) - 1}' + '}')
+                    position += len(group)
+                fout.write(''.join(rules) + '\n' +
+                           r'& ' + ''.join(' & ' + _planet_label(i) for i in idx) + r'\\' + '\n')
             if bimodal:
                 # which solution each column holds, under the system name it belongs to
                 fout.write(r'& ' + ''.join(' & ' + _solution_label(i) for i in idx) + r'\\' + '\n')
@@ -763,17 +877,25 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
             fout.write(r'\midrule' + '\n')
             if show_priors:
                 # the priors are only read for a normal fit, so a bimodal table has no priors block
+                # a prior is placed on the system, so like the stellar parameters it is written once per group
+                def prior_cells(cells):
+                    if multiplanet:
+                        return ''.join(_span_cell(cells[group[0]], len(group)) for group in chunk_groups)
+                    return ''.join(cells[i] for i in idx)
+
                 fout.write(r'\multicolumn{' + str(n_chunk + 2) + r'}{l}{\textbf{Priors}:} \\' + '\n' +
-                           r'$\pi$ & Gaia Parallax (mas)' + ''.join(parallax_prior[i] for i in idx) + r'\\' + '\n' +
-                           r'$[{\rm Fe/H}]$ & Metallicity (dex)' + ''.join(metallicity_prior[i] for i in idx) + r'\\' + '\n' +
-                           r'$A_V$ & V-band extinction (mag)' + ''.join(extinction_prior[i] for i in idx) + r'\\' + '\n' +
-                           r'$D_T$ & Dilution in \tess' + ''.join(dilution_prior[i] for i in idx) + r'\\' + '\n' +
+                           r'$\pi$ & Gaia Parallax (mas)' + prior_cells(parallax_prior) + r'\\' + '\n' +
+                           r'$[{\rm Fe/H}]$ & Metallicity (dex)' + prior_cells(metallicity_prior) + r'\\' + '\n' +
+                           r'$A_V$ & V-band extinction (mag)' + prior_cells(extinction_prior) + r'\\' + '\n' +
+                           r'$D_T$ & Dilution in \tess' + prior_cells(dilution_prior) + r'\\' + '\n' +
                            r'\hline' + '\n')
             fout.write(r'\multicolumn{' + str(n_chunk + 2) + r'}{l}{\textbf{Stellar Parameters}:} \\' + '\n')
 
             for param_name, median_key, labels in stellar_parameter_specs:
                 if _normalize_param_name(param_name) in selected_parameters:
-                    write(_row_slice(labels, idx), fout)
+                    # a star belongs to the system, so when the columns are its planets the value is written once
+                    # across them; grouped by solution, each solution has a star of its own and keeps its column
+                    write(_system_row_slice(labels, chunk_groups) if multiplanet else _row_slice(labels, idx), fout)
 
             if not secondary:
                 # the planetary parameters of the fit belong to the target star, not to a secondary star
