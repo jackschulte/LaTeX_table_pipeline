@@ -15,28 +15,18 @@ PLANET_LABELS = 'bcdefghijklmnopqrstuvwxyz'
 
 def format_value_with_errors(val, up_err, low_err):
     '''
-    Format a value and its asymmetric uncertainties so:
-    - scientific notation is removed
-    - the uncertainties are written to the same number of decimal places as the value
+    Formats a value and its asymmetric uncertainties as strings, without scientific notation and all to
+    the same number of decimal places, which the value sets. Takes the strings grab_medians returns, so
+    that the precision EXOFASTv2 reported survives.
 
-    The value governs the precision: both uncertainties are rounded to the number of decimal places the
-    value is written with, so that the three numbers line up and none of them loses a trailing zero. The
-    three arrive as the strings grab_medians read out of the EXOFASTv2 median file, which carry exactly
-    the digits EXOFASTv2 chose to report; turning them into floats first would drop every trailing zero
-    and with it the precision the fit reported.
+    Returns the three as strings, with None for each uncertainty when they are missing and the '---'
+    filler when the value itself is.
 
     Parameters
     -----------
     val: the value to format
     up_err: the upper uncertainty on the value
     low_err: the lower uncertainty on the value
-
-    Returns
-    -------
-    tuple[str, str | None, str | None]
-        The value and its two uncertainties as strings. A value that is missing or not a number comes
-        back as the '---' filler with no uncertainties, and a value whose uncertainties are missing
-        comes back on its own, both signalled by a None in place of each uncertainty.
     '''
     if not is_finite_number(val):
         return '---', None, None
@@ -173,13 +163,11 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     path: path of EXOFASTv2 output files
     file_prefix_list: list of prefixes used in EXOFASTv2 file generation
     outputpath: the folder in which the table should be generated. Current working directory by default
-    bimodal: boolean to decide whether or not to use the files that are output by splitpdf.pro. When True the output
-        files are named bimodal_median_table.tex (rather than median_table.tex), the low- and high-mass solutions of a
-        given target are kept together in the same table when the target list is split (see max_targets_per_table), and
-        the header is written three rows deep: the system name spanning its solution columns, then "Low-mass solution"
-        or "High-mass solution" for each column, then the probabilities if they were given. The system name and the
-        solution label are read off the target name ('TOI-4138 (Low Mass)'), falling back to the file prefix
-        ('257060897.lowmass') when the target name carries no low-/high-mass marker.
+    bimodal: boolean to decide whether or not to use the files that are output by splitpdf.pro. When True the output is
+        named bimodal_median_table.tex, a target's low- and high-mass solutions stay in the same table when the list is
+        split (see max_targets_per_table), and the header runs three rows deep: the system name spanning its solution
+        columns, then each column's solution, then the probabilities if given. Both labels are read off the target name
+        ('TOI-4138 (Low Mass)'), falling back to the file prefix ('257060897.lowmass') if it carries no marker.
     parameters: optional list of parameter names to include in the table. Defaults to the set of parameters
         used in Schulte+ 2025
     probabilities: optional list of the probability of each solution, ordered to match file_prefix_list. Each entry is
@@ -193,37 +181,30 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     MNRAS: set to True to use the MNRAS class's \\contcaption for the continuation tables, in place of the
         "\\caption{\\textit{(Continued)}}" and "\\addtocounter{table}{-1}" pair written otherwise. \\contcaption
         supplies the continuation wording and holds the table number itself, so neither is needed alongside it.
-    secondary_stars: set to True to build a table of the median stellar parameters of the secondary stars instead of the target
-        stars. The values are read from the same median files, off the parameters EXOFASTv2 writes with a star index above 0
-        (teff_1, feh_1, ...), so target_list holds the name of each secondary star while file_prefix_list holds the fit of its
-        host, as in secondary_stars_table(). Only stellar parameters are written, since the planetary parameters of the fit
-        belong to the target star, and the priors block is replaced by the classification and planet host rows described under
-        star_types and host_list. Hosts whose fit has no secondary star are dropped from the table, and their names are
-        printed. The output is named secondary_median_table.tex. A host with more than one secondary star is listed once per
-        star, and the repeats take the star indices in the order they appear, so the first is star 1 and the second is star 2.
-        Passing an integer instead of True reads that star index for every column (secondary_stars=2 reads teff_2, feh_2, ...).
-        The symbols of the initial metallicity, age, V-band extinction and distance rows are marked with a superscript
-        asterisk, and a note explaining that a bound companion takes those four from the primary star is written beneath the
-        last table. The note is left out if none of the four are in the table.
+    secondary_stars: set to True to tabulate the secondary stars' median stellar parameters instead of the target stars'.
+        Values come from the same median files at star indices above 0 (teff_1, feh_1, ...); target_list names the
+        secondary stars and file_prefix_list their hosts' fits, as in secondary_stars_table(). Only stellar parameters
+        are written, the planetary ones belonging to the target star, and the classification and planet host rows replace
+        the priors block (see star_types and host_list). Hosts with no secondary star are named and dropped; a host with
+        several is listed once per star, taking the indices in order. An integer in place of True fixes the index for
+        every column (secondary_stars=2 reads teff_2, feh_2, ...). The initial metallicity, age, V-band extinction and
+        distance rows, where present, carry an asterisk and a note that a bound companion takes those four from its
+        primary. Output is named secondary_median_table.tex.
     host_list: optional array of the names of the hosts, one per entry of target_list. If given, they are written in a 'Planet
         Host' row beneath the star names. Only used when secondary_stars is set.
     star_types: optional dict of classifications describing what each secondary star is, such as 'Bound companion' or
         'Background star'. Keys are the names in target_list. The classification row is only written if at least one secondary
         star has been classified. Only used when secondary_stars is set.
-    bimodal_targets: optional list of the targets whose mass and age posteriors are bimodal, named as they are in
-        target_list. Each one's name is marked with a superscript asterisk in the column header, and a note pointing at
-        the bimodal table for the individual solutions is written beneath the last table. Names are matched loosely, so
-        'TOI-3988', 'TOI 3988' and 'toi3988' all name the same star, and a name matching no target is reported. Only
-        used for a table of target stars: a bimodal table already gives each solution its own column, and a
-        secondary-star table marks its rows with an asterisk of its own.
-    multiplanet: set to True to give every planet of a multi-planet system its own column. The system name spans its
-        planets' columns with a rule beneath it, a row of planet letters (b, c, d, ...) runs below the names, and the
-        stellar parameters and priors, which belong to the system rather than to any one planet, are written once
-        across the group. The planets of each fit are counted from its median file, where EXOFASTv2 indexes them as
-        Period_0 for planet b, Period_1 for planet c, and so on. Pass a dict of target name to planet count
-        ({'TOI-1111': 2}) to set the counts by hand instead; a target the dict does not name keeps the planets found
-        in its file. max_targets_per_table counts columns, so a table of a two-planet and a three-planet system fills
-        a limit of five. Cannot be combined with bimodal, which groups the columns by solution instead, and does
+    bimodal_targets: optional list of the targets whose mass and age posteriors are bimodal. Each is marked with a
+        superscript asterisk in the column header, and a note pointing at the bimodal table is written beneath the
+        last table. Names are matched loosely ('TOI-3988', 'TOI 3988' and 'toi3988' all match) and one matching no
+        target is reported. Only for a table of target stars.
+    multiplanet: set to True to give every planet of a multi-planet system its own column, under the system name
+        with a rule beneath it and a row of planet letters. Stellar parameters and priors belong to the star, so
+        they are written once across its planets. The planets are counted from each median file, where EXOFASTv2
+        indexes them Period_0, Period_1, ...; pass a dict of target name to planet count ({'TOI-1111': 2}) to set
+        them by hand. Combined with bimodal the two nest, the system spanning its solutions and each solution its
+        planets, so a two-planet bimodal system fills four columns. max_targets_per_table counts columns. Does
         nothing for a secondary-star table, which holds no planetary parameters.
     '''
 
@@ -234,11 +215,9 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     if fixed_star_index is not None and fixed_star_index < 1:
         raise ValueError(f'secondary_stars must be True, False, or a star index of 1 or more, not {secondary_stars!r}.')
 
-    # `multiplanet` gives each planet of a system its own column, which is the same column grouping a bimodal
-    # table uses for its solutions; the two cannot both own the grouping
-    if multiplanet and bimodal:
-        raise ValueError('multiplanet and bimodal both group the columns of a table, one by planet and the other '
-                         'by solution, so they cannot be used together.')
+    # `multiplanet` gives each planet of a system its own column. Combined with `bimodal` the two nest, a system
+    # spanning its solutions and each solution spanning its planets, so that a two-planet bimodal system fills
+    # four columns.
     if multiplanet and secondary:
         logging.warning('multiplanet does nothing for a secondary-star table, which holds only stellar parameters; '
                         'the columns are left one to a star.')
@@ -554,6 +533,11 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
         median_tables = [median_tables[ii] for ii, _ in expanded]
         star_indices = [star_indices[ii] for ii, _ in expanded]
         planet_indices = [planet for _, planet in expanded]
+        # anything else held one entry to a column has to follow the columns as they are expanded
+        if probability_cells is not None:
+            probability_cells = [probability_cells[ii] for ii, _ in expanded]
+        if host_list is not None:
+            host_list = [host_list[ii] for ii, _ in expanded]
 
     # A target whose mass and age posteriors are bimodal is marked with a superscript asterisk on its name, and a
     # note beneath the last table sends the reader to the bimodal table for the two solutions. The names are matched
@@ -651,6 +635,12 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     else:
         groups = [[ii] for ii in range(n_targets)]
 
+    # The columns that share a star, which is the span of a stellar parameter and of a prior. Without
+    # `multiplanet` that is one column apiece, including in a bimodal table, where the two solutions are two
+    # different stars. With it, `planet_groups` already holds the right thing: the planets of one fit, which is
+    # one system normally and one solution of one system in a bimodal table.
+    star_groups = planet_groups if multiplanet else [[ii] for ii in range(n_targets)]
+
     # Packing the groups into tables. A group is never split, so a group that is on its own larger than
     # max_targets_per_table gets a table to itself and overruns the limit.
     if not max_targets_per_table or max_targets_per_table >= n_targets:
@@ -715,11 +705,10 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
             return (declared if len(declared) else rows)[column].iloc[0]
 
         def gaussian_prior_cell(mean, stdev, name, prefix):
-            '''Writes a Gaussian prior as a table cell, to five significant figures, or the '---' filler.
+            '''Writes a Gaussian prior as a table cell, to five significant figures.
 
-            A prior whose mean or standard deviation is missing is left blank rather than written as
-            'nan', which is what happens when a prior file links a variable to a row that is not there
-            (see grab_priors).
+            A prior whose mean or standard deviation is missing gets the '---' filler rather than 'nan',
+            which is what a prior file linking to a row that is not there would otherwise produce.
             '''
             if not (is_finite_number(mean) and is_finite_number(stdev)):
                 logging.warning(f'{prefix} has no usable {name} prior (mean {mean}, standard deviation '
@@ -800,18 +789,35 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
             body = body[1:].strip()
         return r'& \multicolumn{' + str(span) + r'}{c}{' + body + '} '
 
-    def _system_row_slice(arr, chunk_groups):
-        '''Return a table row for a value that belongs to the system rather than to any one of its planets.
+    def _cmidrules(column_groups):
+        '''A trimmed rule beneath each group of columns, marking off the span of the heading above it.'''
+        rules = []
+        position = 3 # the first data column, after the symbol and description columns
+        for group in column_groups:
+            rules.append(r'\cmidrule(lr){' + f'{position}-{position + len(group) - 1}' + '}')
+            position += len(group)
+        return ''.join(rules) + '\n'
 
-        Each group contributes one cell, taken from its first column and spanning the rest, so that a stellar
-        parameter or a prior is stated once per system however many planets the system has. With one column per
-        group, as in every table that is not grouped by planet, this is exactly _row_slice.
+    def _spanning_header(cell_of, column_groups):
+        '''A header row whose every cell runs across the columns of its group.'''
+        return r'& ' + ''.join(r' & \multicolumn{' + str(len(group)) + r'}{c}{' + cell_of(group[0]) + '}'
+                               for group in column_groups) + r'\\' + '\n'
+
+    def _system_row_slice(arr, column_groups):
+        '''Return a table row for a value that belongs to a star rather than to any one of its planets.
+
+        Each group gives one cell, taken from its first column and spanning the rest, so a stellar parameter or
+        a prior is stated once however many planets the star has. Pass `star_groups`. With one column per group
+        this is exactly _row_slice.
         '''
         cells = arr[1:]
-        return arr[:1] + [_span_cell(cells[group[0]], len(group)) for group in chunk_groups]
+        return arr[:1] + [_span_cell(cells[group[0]], len(group)) for group in column_groups]
 
     def _write_chunk(fname, chunk_groups, is_first, is_last):
         idx = [i for group in chunk_groups for i in group]
+        # the star groups this table holds; a chunk never splits a system, so each is wholly in or wholly out
+        in_chunk = set(idx)
+        chunk_star_groups = [group for group in star_groups if group[0] in in_chunk]
         n_chunk = len(idx)
         colstring = 'c' * n_chunk
         if bimodal:
@@ -853,19 +859,17 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
                        r'\begin{tabular}{ll' + colstring + '}'+'\n'+
                        r'\toprule' + '\n' +
                        r'& ' + namestring + r'\\' +'\n')
-            if multiplanet:
-                # a rule under each system name, marking off the columns it covers, and then the planet each
-                # column holds. The rules are trimmed on both sides so that neighbouring systems stay apart.
-                position = 3 # the first data column, after the symbol and description columns
-                rules = []
-                for group in chunk_groups:
-                    rules.append(r'\cmidrule(lr){' + f'{position}-{position + len(group) - 1}' + '}')
-                    position += len(group)
-                fout.write(''.join(rules) + '\n' +
-                           r'& ' + ''.join(' & ' + _planet_label(i) for i in idx) + r'\\' + '\n')
+            # The header runs from the widest grouping down: the system name over all of its columns, then the
+            # solution over its planets, then the planet each column holds. Each spanning heading gets a trimmed
+            # rule beneath it so that neighbouring systems, and neighbouring solutions, stay apart.
+            if bimodal or multiplanet:
+                fout.write(_cmidrules(chunk_groups))
             if bimodal:
                 # which solution each column holds, under the system name it belongs to
-                fout.write(r'& ' + ''.join(' & ' + _solution_label(i) for i in idx) + r'\\' + '\n')
+                if multiplanet:
+                    fout.write(_spanning_header(_solution_label, chunk_star_groups))
+                else:
+                    fout.write(r'& ' + ''.join(' & ' + _solution_label(i) for i in idx) + r'\\' + '\n')
             if classified:
                 # what each secondary star is, written first so that the planet host is not read as one
                 fout.write(r'& Classification' + ''.join(' & ' + type_labels[i] for i in idx) + r'\\' + '\n')
@@ -873,14 +877,22 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
                 fout.write(r'& Planet Host' + ''.join(' & ' + host_labels[i] for i in idx) + r'\\' + '\n')
             if probability_cells is not None:
                 # the probability of each solution goes on its own header line, under the solution name
-                fout.write(r'& ' + ''.join(' & ' + probability_cells[i] for i in idx) + r'\\' + '\n')
+                if multiplanet:
+                    fout.write(_spanning_header(lambda i: probability_cells[i], chunk_star_groups))
+                else:
+                    fout.write(r'& ' + ''.join(' & ' + probability_cells[i] for i in idx) + r'\\' + '\n')
+            if multiplanet:
+                # a second rule marks off each solution's planets, where the solutions are themselves grouped
+                if bimodal:
+                    fout.write(_cmidrules(chunk_star_groups))
+                fout.write(r'& ' + ''.join(' & ' + _planet_label(i) for i in idx) + r'\\' + '\n')
             fout.write(r'\midrule' + '\n')
             if show_priors:
                 # the priors are only read for a normal fit, so a bimodal table has no priors block
                 # a prior is placed on the system, so like the stellar parameters it is written once per group
                 def prior_cells(cells):
                     if multiplanet:
-                        return ''.join(_span_cell(cells[group[0]], len(group)) for group in chunk_groups)
+                        return ''.join(_span_cell(cells[group[0]], len(group)) for group in chunk_star_groups)
                     return ''.join(cells[i] for i in idx)
 
                 fout.write(r'\multicolumn{' + str(n_chunk + 2) + r'}{l}{\textbf{Priors}:} \\' + '\n' +
@@ -895,7 +907,7 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
                 if _normalize_param_name(param_name) in selected_parameters:
                     # a star belongs to the system, so when the columns are its planets the value is written once
                     # across them; grouped by solution, each solution has a star of its own and keeps its column
-                    write(_system_row_slice(labels, chunk_groups) if multiplanet else _row_slice(labels, idx), fout)
+                    write(_system_row_slice(labels, chunk_star_groups) if multiplanet else _row_slice(labels, idx), fout)
 
             if not secondary:
                 # the planetary parameters of the fit belong to the target star, not to a secondary star

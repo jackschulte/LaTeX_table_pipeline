@@ -243,15 +243,12 @@ def _companion_separation(detections):
 def _round_with_errors(value, up_err, low_err, num_sig_figs=2):
     """Round a value and its uncertainties so the uncertainties carry a set number of significant figures.
 
-    The value and both uncertainties are written to the same number of decimal places, which is set
-    by the smaller of the two uncertainties. Trailing zeros count towards the significant figures, so
-    an uncertainty of 0.20 keeps two decimal places rather than being cut back to 0.2, which would
-    state one significant figure where two were asked for, and the value is padded to the same width
-    rather than ending wherever its own digits happen to run out.
+    The value and both uncertainties are written to the same number of decimal places, set by the
+    smaller uncertainty. Trailing zeros count towards the significant figures, so 0.20 keeps two
+    decimal places rather than being cut back to 0.2.
 
-    Unlike the median table, which takes its precision from the value EXOFASTv2 wrote, these numbers
-    are means and standard deviations computed here from ExoFOP measurements, so the value carries no
-    precision of its own and the uncertainties have to set it.
+    Unlike the median table, which takes its precision from the value EXOFASTv2 wrote, these are means
+    and standard deviations computed here, so the value carries no precision of its own.
 
     Parameters
     ----------

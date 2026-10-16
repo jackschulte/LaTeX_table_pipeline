@@ -15,12 +15,10 @@ def gen_lit_str(array, value, error=None, decimals=None):
     '''
     Appends a string version of the literature value obtained via query to the appropriate list of strings
 
-    A value and its error are written to the same number of decimal places, so that neither drops a
-    trailing zero the other still shows: a magnitude of 9.95 quoted to three decimal places is written
-    as 9.950 beside its error of 0.024, and an error of 0.02 beside a value quoted to four places is
-    written as 0.0200. Where an error is too small to survive being rounded to the value's precision it
-    keeps enough decimal places to show its leading digit and the value is padded to match, so that a
-    measurement is never reported with an uncertainty of zero.
+    A value and its error are written to the same number of decimal places, so neither drops a trailing
+    zero the other still shows: 9.95 to three places is written as 9.950 beside its error of 0.024. An
+    error too small to survive the value's precision keeps its leading digit and the value is padded to
+    match, so a measurement is never reported with an uncertainty of zero.
 
     Parameters
     -----------
@@ -28,8 +26,7 @@ def gen_lit_str(array, value, error=None, decimals=None):
     value: the value to append to the array
     error: the error on that value, if there is one
     decimals: the number of decimal places to write the value and its error with. When None the value
-        keeps the precision it already carries, which is what a value that has been written out
-        beforehand, such as a coordinate in h:m:s, needs.
+        keeps the precision it already carries, as a coordinate in h:m:s does.
     '''
 
     if isinstance(value, str) and not is_finite_number(value):

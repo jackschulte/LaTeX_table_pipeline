@@ -20,20 +20,12 @@ def to_decimal(x):
     '''
     Turns a number into a Decimal without losing the precision it was written with.
 
-    A string keeps exactly the digits it carries, so a median EXOFASTv2 wrote as '0.04530' stays five
-    decimal places wide; float('0.04530') prints as 0.0453 and would cost the median its last
-    significant figure. A float is converted through repr(), the shortest decimal string that round
-    trips, rather than through Decimal(float), which would expose the whole tail of the binary
-    representation (0.1 becoming 0.1000000000000000055511151231257827).
+    A string keeps exactly the digits it carries, so '0.04530' stays five decimal places wide. Raises
+    InvalidOperation if x does not spell a finite number.
 
     Parameters
     -----------
     x: the number to convert, as a string, float, int, or Decimal
-
-    Raises
-    -------
-    InvalidOperation
-        If x does not spell a number.
     '''
     if isinstance(x, Decimal):
         return x
@@ -48,10 +40,8 @@ def to_decimal(x):
 
 def is_finite_number(x):
     '''
-    Whether a value spells a finite number, and so can be written into a table.
-
-    Catches the None and masked entries a catalogue query returns for a missing measurement as well as
-    the NaN and infinity a fit can produce, so that callers can write the '---' filler instead.
+    Whether a value spells a finite number, and so can be written into a table rather than the '---'
+    filler. Catches None, the masked entries of a catalogue query, NaN and infinity.
 
     Parameters
     -----------
@@ -69,9 +59,8 @@ def decimal_places(x):
     '''
     Counts the digits a number carries after the decimal point when it is written positionally.
 
-    This is the precision of a number as written rather than as valued, so it is only exact for a
-    number passed as a string: '1.50' has two decimal places while the float 1.50 has one, since the
-    trailing zero is gone by the time Python has parsed it.
+    This is precision as written, not as valued, so it is only exact for a string: '1.50' has two
+    decimal places while the float 1.50 has one.
 
     Parameters
     -----------
@@ -83,9 +72,8 @@ def format_to_decimals(x, decimals):
     '''
     Writes a number positionally with exactly the given number of digits after the decimal point.
 
-    Trailing zeros are kept, so a value rounded to three decimal places always shows three of them,
-    and half-way cases round away from zero (0.0625 to three decimals is 0.063) rather than to the
-    nearest even digit as numpy and Python's own round() do.
+    Trailing zeros are kept, and half-way cases round away from zero rather than to the nearest even
+    digit as numpy and Python's own round() do.
 
     Parameters
     -----------
@@ -102,11 +90,9 @@ def format_to_decimals(x, decimals):
 
 def format_sig_figs(x, num_sig_figs):
     '''
-    Writes a number positionally to a fixed number of significant figures, keeping trailing zeros.
-
-    Unlike round_sig_figs, which reports the shortest string that carries the rounded value, this keeps
-    the zeros that state the precision: 6.2 to three significant figures is '6.20'. Use it where the
-    result sets the precision that an uncertainty then has to match.
+    Writes a number positionally to a fixed number of significant figures, keeping trailing zeros:
+    6.2 to three significant figures is '6.20'. Use it where the result sets a precision that an
+    uncertainty then has to match; round_sig_figs drops those zeros instead.
 
     Parameters
     -----------
@@ -126,9 +112,8 @@ def remove_sci_notation(x):
     '''
     Removes scientific notation from a number and returns it as a string.
 
-    A number passed as a string keeps exactly the digits it carries, so that a value read out of a file
-    is written with the precision it was recorded with. A float is written with the shortest digits
-    that round trip, which drops any trailing zero the number no longer remembers.
+    A string keeps exactly the digits it carries; a float is written with the shortest digits that
+    round trip, which drops any trailing zero it no longer remembers.
 
     Parameters
     -----------
@@ -145,12 +130,8 @@ def round_sig_figs(x, num_sig_figs):
     '''
     Rounds a number to a specified number of significant figures.
 
-    The result is always positional: '{:g}' alone switches to scientific notation for a number below
-    1e-5 or above the requested number of figures, which would put an 'e-06' into the table.
-
-    Trailing zeros are dropped, so 6.2 to three significant figures comes back as '6.2'. Where the
-    precision has to be stated rather than merely carried, as for a value an uncertainty is written
-    alongside, use format_sig_figs instead.
+    The result is always positional, never 'e-06'. Trailing zeros are dropped; where the precision has
+    to be stated rather than merely carried, use format_sig_figs instead.
 
     Parameters
     -----------
@@ -163,10 +144,8 @@ def _decimals_showing(decimals, *values):
     '''
     Widens a number of decimal places until every non-zero value given still shows a digit.
 
-    A value that is small enough to round away to zero at the precision asked for says nothing at all:
-    an uncertainty printed as '0.0' claims a measurement was exact. Where that would happen the
-    precision is widened to the place of the value's leading significant figure, which is the fewest
-    decimal places that keep it, and the widening is logged so that the mismatch is visible.
+    An uncertainty printed as '0.0' would claim a measurement was exact, so where one would round away
+    the precision is widened to its leading significant figure and the widening is logged.
 
     Parameters
     -----------
@@ -188,17 +167,11 @@ def _decimals_showing(decimals, *values):
 
 def robust_decimal_errors(val, up_err, low_err, decimals=None):
     '''
-    Writes a value and its uncertainties to the same number of decimal places.
+    Writes a value and its uncertainties to the same number of decimal places, set by the value.
 
-    The value sets the precision: both uncertainties are rounded to the number of decimal places the
-    value is written with, so that the three numbers line up and no trailing zero is dropped from any
-    of them. Pass the numbers as strings, as they are read out of an EXOFASTv2 median file, to keep
-    the precision EXOFASTv2 chose for them; passing floats loses every trailing zero before this
-    function ever sees the number.
-
-    If the value was written coarsely enough that an uncertainty would round away to zero, the
-    precision is widened until the uncertainty keeps its leading digit and the value is padded to
-    match, since an uncertainty of zero states something that was never measured.
+    Pass the numbers as strings, as grab_medians returns them, to keep the precision EXOFASTv2 chose;
+    floats lose their trailing zeros before this function sees them. If an uncertainty would round
+    away to zero the precision is widened until it survives (see _decimals_showing).
 
     Parameters
     -----------
@@ -217,9 +190,8 @@ def robust_decimal_errors(val, up_err, low_err, decimals=None):
 
 def format_value_and_error(val, err, decimals=None):
     '''
-    Writes a value and its symmetric uncertainty to the same number of decimal places.
-
-    The symmetric case of robust_decimal_errors, for a catalogue value quoted with a single error.
+    Writes a value and its symmetric uncertainty to the same number of decimal places: the symmetric
+    case of robust_decimal_errors, for a catalogue value quoted with a single error.
 
     Parameters
     -----------
@@ -235,11 +207,9 @@ def grab_medians(path, file_prefix, bimodal=False):
     '''
     Collects median values from EXOFASTv2 output files at the defined path.
 
-    The median value and the two uncertainties are returned as strings holding exactly the digits
-    EXOFASTv2 wrote, with any scientific-notation exponent already folded in. Reading them as numbers
-    would throw away the precision the file states: a median of '0.04530' would come back as 0.0453
-    and the table would lose the last significant figure EXOFASTv2 chose to report. Callers that want
-    to compute with a value rather than print it should call float() on it themselves.
+    The value and its two uncertainties come back as strings holding exactly the digits EXOFASTv2
+    wrote, with any scientific-notation exponent folded in; reading them as numbers would drop the
+    trailing zeros that state the precision. Call float() on them to compute with them.
 
     Parameters
     -----------
@@ -282,9 +252,8 @@ def _apply_exponent(value, exponent):
     '''
     Multiplies a number written as a string by a power of ten, keeping every digit it was written with.
 
-    Shifting the decimal point rather than multiplying by a float keeps the significant figures exact,
-    so a bolometric flux of '5.40' with an exponent of -10 becomes '0.000000000540' and keeps the
-    trailing zero that states its precision.
+    The decimal point is shifted rather than the number multiplied by a float, so '5.40' with an
+    exponent of -10 becomes '0.000000000540' and keeps its trailing zero.
 
     Parameters
     -----------
