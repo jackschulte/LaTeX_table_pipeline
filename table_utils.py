@@ -1,4 +1,4 @@
-"""Formatting and ExoFOP scraping helpers shared by the LaTeX table generators."""
+"""Formatting, ExoFOP scraping and VizieR query helpers shared by the LaTeX table generators."""
 
 import numpy as np
 import pandas as pd
@@ -9,6 +9,8 @@ import time
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, localcontext
 from http.client import HTTPException
 from urllib.request import urlopen
+from astroquery.vizier import Vizier
+from requests.exceptions import RequestException
 
 # every number is quantized inside this context, which is wide enough for the longest value a
 # table holds (a time of conjunction written to eight decimal places) without the default
@@ -353,6 +355,44 @@ def fetch_exofop_page(tic_id, attempts=3, delay=5):
 
     raise ExoFOPFetchError(f'Could not fetch the full ExoFOP page of TIC {tic_id} in {attempts} attempts; '
                            f'last, {problem}.')
+
+
+VIZIER_MIRROR = 'vizier.cfa.harvard.edu' # the Harvard mirror of VizieR, used when the main server at CDS is down
+_main_vizier_down = False # set once the main server fails, so later queries go straight to the mirror
+
+
+def query_vizier(target, radius, columns, catalog):
+    """Query a VizieR catalogue around a target, using the Harvard mirror if the main server is down.
+
+    The main VizieR server takes a minute to time out when it is down, so once a query to it fails
+    every later query in the session goes straight to the mirror; restart the kernel (or reimport
+    table_utils) to try the main server again. The switch is logged as a warning.
+
+    Parameters
+    ----------
+    target : str
+        Name of the target (resolved by Sesame), such as 'TIC 371864043'.
+    radius : astropy.coordinates.Angle
+        Search radius around the target.
+    columns : list of str
+        Catalogue columns to return.
+    catalog : str
+        VizieR catalogue identifier, such as 'I/355/gaiadr3'.
+
+    Returns
+    -------
+    astroquery.utils.TableList
+        The tables VizieR returns, as from Vizier.query_region.
+    """
+    global _main_vizier_down
+    if not _main_vizier_down:
+        try:
+            return Vizier(columns=columns, catalog=catalog).query_region(target, radius=radius)
+        except RequestException as e:
+            _main_vizier_down = True
+            logging.warning(f'The main VizieR server could not be reached ({type(e).__name__}); querying the '
+                            f'Harvard mirror ({VIZIER_MIRROR}) instead for the rest of this session.')
+    return Vizier(columns=columns, catalog=catalog, vizier_server=VIZIER_MIRROR).query_region(target, radius=radius)
 
 
 def _extract_grid_rows(html, heading_text):

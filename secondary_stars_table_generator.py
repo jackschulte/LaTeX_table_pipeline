@@ -3,11 +3,10 @@
 import numpy as np
 import os
 import pandas as pd
-from astroquery.vizier import Vizier
 from astropy.coordinates import Angle
 import logging
 from table_utils import (_extract_grid_rows, decimal_places, fetch_exofop_page, format_sig_figs,
-                         format_to_decimals, grab_medians, is_finite_number, write)
+                         format_to_decimals, grab_medians, is_finite_number, query_vizier, write)
 
 # EXOFASTv2 SED bandnames that map onto the Gaia magnitude rows of the secondary star table
 SECONDARY_GAIA_BANDS = {
@@ -470,8 +469,7 @@ def secondary_stars_table(target_list, path, file_prefix, tic_list=None, host_li
                 logging.warning(f'There is no distance in the median table of {prefix}. The projected separation of {label} will be omitted.')
         elif distance_source == 'gaia':
             if tic not in parallax_cache:
-                vgaia = Vizier(columns=['_r', 'Plx', 'e_Plx'], catalog='I/355/gaiadr3')
-                data_gaia = vgaia.query_region('TIC ' + tic, radius=Angle(6, "arcsec"))
+                data_gaia = query_vizier('TIC ' + tic, Angle(6, "arcsec"), ['_r', 'Plx', 'e_Plx'], 'I/355/gaiadr3')
                 data_gaia = data_gaia[0]
                 data_gaia.sort('_r') # sort by distance from the target star
                 parallax_cache[tic] = (float(data_gaia['Plx'][0]), float(data_gaia['e_Plx'][0]))

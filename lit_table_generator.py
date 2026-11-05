@@ -3,13 +3,12 @@
 import numpy as np
 import os
 import pandas as pd
-from astroquery.vizier import Vizier
 from astropy.coordinates import Angle
 from grab_tres_vsini import grab_tres_vsini
 import re
 import logging
 from table_utils import (format_sig_figs, format_to_decimals, format_value_and_error,
-                         is_finite_number, remove_sci_notation, write)
+                         is_finite_number, query_vizier, remove_sci_notation, write)
 
 def gen_lit_str(array, value, error=None, decimals=None):
     '''
@@ -154,8 +153,7 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
         # querying for data
         gaia_columns=['_r', 'RAJ2000', 'DEJ2000', 'Gmag', 'e_Gmag', 'BPmag', 'e_BPmag', 'RPmag', 'e_RPmag', 'pmRA', \
             'e_pmRA', 'pmDE', 'e_pmDE', 'Plx', 'e_Plx', 'Vbroad', 'e_Vbroad', 'TYC2', '2MASS', 'DR3Name']
-        vgaia = Vizier(columns=gaia_columns, catalog='I/355/gaiadr3')
-        data_gaia = vgaia.query_region('TIC ' + str(TIC_IDs[i]), radius=Angle(6, "arcsec"))
+        data_gaia = query_vizier('TIC ' + str(TIC_IDs[i]), Angle(6, "arcsec"), gaia_columns, 'I/355/gaiadr3')
         data_gaia = data_gaia[0] # Vizier returns a list of tables, but we only want the first one
         data_gaia.sort('_r') # sort by distance from the target star
         if len(data_gaia) > 1:
@@ -163,8 +161,7 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
         data_gaia = data_gaia[0]
 
         twomass_columns=['_r', 'Jmag', 'e_Jmag', 'Hmag', 'e_Hmag', 'Kmag', 'e_Kmag']
-        v2mass = Vizier(columns=twomass_columns, catalog='II/246/out')
-        data_2MASS = v2mass.query_region('TIC ' + str(TIC_IDs[i]), radius=Angle(6, "arcsec"))
+        data_2MASS = query_vizier('TIC ' + str(TIC_IDs[i]), Angle(6, "arcsec"), twomass_columns, 'II/246/out')
         data_2MASS = data_2MASS[0] # Vizier returns a list of tables, but we only want the first one
         data_2MASS.sort('_r') # sort by distance from the target star
         if len(data_2MASS) > 1:
@@ -173,8 +170,7 @@ def lit_table(target_list, path, file_prefix=None, outputpath='.', vsini_type='g
         
 
         WISE_columns=['_r', 'W1mag', 'e_W1mag', 'W2mag', 'e_W2mag', 'W3mag', 'e_W3mag', 'W4mag', 'e_W4mag']
-        vwise = Vizier(columns=WISE_columns, catalog='II/311/wise')
-        data_WISE = vwise.query_region('TIC ' + str(TIC_IDs[i]), radius=Angle(6, "arcsec"))
+        data_WISE = query_vizier('TIC ' + str(TIC_IDs[i]), Angle(6, "arcsec"), WISE_columns, 'II/311/wise')
         data_WISE = data_WISE[0] # Vizier returns a list of tables, but we only want the first one
         data_WISE.sort('_r') # sort by distance from the target star
         if len(data_WISE) > 1:
