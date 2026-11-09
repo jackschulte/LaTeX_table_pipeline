@@ -153,7 +153,8 @@ def make_median_string(medians, param, array, star_index=0):
 
 def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False, parameters=None,
               probabilities=None, max_targets_per_table=5, secondary_stars=False, host_list=None,
-              star_types=None, MNRAS=False, bimodal_targets=None, multiplanet=False):
+              star_types=None, MNRAS=False, bimodal_targets=None, multiplanet=False, include_priors=True,
+              prior_path=None):
     '''
     Generates a median table given the path to EXOFASTv2 output files.
 
@@ -167,7 +168,8 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
         named bimodal_median_table.tex, a target's low- and high-mass solutions stay in the same table when the list is
         split (see max_targets_per_table), and the header runs three rows deep: the system name spanning its solution
         columns, then each column's solution, then the probabilities if given. Both labels are read off the target name
-        ('TOI-4138 (Low Mass)'), falling back to the file prefix ('257060897.lowmass') if it carries no marker.
+        ('TOI-4138 (Low Mass)'), falling back to the file prefix ('257060897.lowmass') if it carries no marker. The
+        priors are those of the fit the solutions were split from (see include_priors).
     parameters: optional list of parameter names to include in the table. Defaults to the set of parameters
         used in Schulte+ 2025
     probabilities: optional list of the probability of each solution, ordered to match file_prefix_list. Each entry is
@@ -198,7 +200,7 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     bimodal_targets: optional list of the targets whose mass and age posteriors are bimodal. Each is marked with a
         superscript asterisk in the column header, and a note pointing at the bimodal table is written beneath the
         last table. Names are matched loosely ('TOI-3988', 'TOI 3988' and 'toi3988' all match) and one matching no
-        target is reported. Only for a table of target stars.
+        target is reported.
     multiplanet: set to True to give every planet of a multi-planet system its own column, under the system name
         with a rule beneath it and a row of planet letters. Stellar parameters and priors belong to the star, so
         they are written once across its planets. The planets are counted from each median file, where EXOFASTv2
@@ -206,6 +208,10 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
         them by hand. Combined with bimodal the two nest, the system spanning its solutions and each solution its
         planets, so a two-planet bimodal system fills four columns. max_targets_per_table counts columns. Does
         nothing for a secondary-star table, which holds no planetary parameters.
+    include_priors: set to False to leave out the priors block at the top of the table (Gaia parallax, metallicity,
+        V-band extinction and dilution) and the note explaining its notation. A secondary star table never has one.
+    prior_path: optional folder holding the '.priors.final' files, for when they are not alongside the median files.
+        Replaces the search described under include_priors.
     '''
 
     # `secondary_stars` picks which star of the fit the table is built from: False keeps the target star,
@@ -687,8 +693,8 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
     metallicity_prior = []
     extinction_prior = []
     dilution_prior = []
-    # the prior files are only read for a normal (non-split) fit of the target star
-    show_priors = (bimodal == False) and (secondary == False)
+    # a secondary-star table has no priors block; its classification and planet host rows take that place
+    show_priors = include_priors and not secondary
     if show_priors:
         dilute_bool = np.zeros_like(target_list) # to keep track of which targets were fit for dilution
 
@@ -716,8 +722,35 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
                 return r'& --- '
             return r'& $\mathcal{G}$[' + round_sig_figs(mean, 5) + r', ' + round_sig_figs(stdev, 5) + r'] '
 
+        def prior_file(index):
+            '''Returns the folder and file prefix of the prior file behind column `index`.
+
+            splitpdf.pro splits the solutions out of a single fit, and writes no prior file of its own, so in a
+            bimodal table the low-/high-mass marker is dropped from the prefix ('257060897.lowmass' -> '257060897')
+            and the folder above `path` is searched after it, since the split files are usually kept in a
+            subfolder of the fit's output.
+            '''
+            prefix = str(file_prefix_list[index])
+            if bimodal:
+                prefix = solution_marker.sub('', prefix) or prefix
+            if prior_path is not None:
+                folders = [prior_path]
+            elif bimodal:
+                folders = [path, os.path.dirname(os.path.normpath(path))]
+            else:
+                folders = [path]
+            folders = [os.path.join(folder, '') for folder in folders] # grab_priors joins folder and prefix as strings
+            for folder in folders:
+                if os.path.exists(folder + prefix + '.priors.final'):
+                    return folder, prefix
+            raise FileNotFoundError(f'No prior file was found for {target_list[index]}; looked for ' +
+                                    ' and '.join(folder + prefix + '.priors.final' for folder in folders) +
+                                    '. Point prior_path at the folder holding it, or set include_priors=False to '
+                                    'leave the priors out of the table.')
+
         for ii in range(len(target_list)):
-            priortable = grab_priors(file_prefix_list[ii], path)
+            prior_folder, prior_prefix = prior_file(ii)
+            priortable = grab_priors(prior_prefix, prior_folder)
             parallax_prior_mean = prior_value(priortable, 'meanvalue', 'parallax')
             parallax_prior_stdev = prior_value(priortable, 'stdev', 'parallax')
             parallax_prior.append(gaussian_prior_cell(parallax_prior_mean, parallax_prior_stdev,
@@ -888,12 +921,18 @@ def med_table(target_list, path, file_prefix_list, outputpath='.', bimodal=False
                 fout.write(r'& ' + ''.join(' & ' + _planet_label(i) for i in idx) + r'\\' + '\n')
             fout.write(r'\midrule' + '\n')
             if show_priors:
-                # the priors are only read for a normal fit, so a bimodal table has no priors block
-                # a prior is placed on the system, so like the stellar parameters it is written once per group
+                # a prior is placed on the fit, so it is written once across the columns read from that fit: the
+                # planets of a system, and in a bimodal table both of its solutions. A group whose cells differ,
+                # which would mean its columns came from different fits, keeps a cell per column.
                 def prior_cells(cells):
-                    if multiplanet:
-                        return ''.join(_span_cell(cells[group[0]], len(group)) for group in chunk_star_groups)
-                    return ''.join(cells[i] for i in idx)
+                    row = ''
+                    for group in chunk_groups:
+                        group_cells = [cells[i] for i in group]
+                        if len(set(group_cells)) == 1:
+                            row += _span_cell(group_cells[0], len(group))
+                        else:
+                            row += ''.join(group_cells)
+                    return row
 
                 fout.write(r'\multicolumn{' + str(n_chunk + 2) + r'}{l}{\textbf{Priors}:} \\' + '\n' +
                            r'$\pi$ & Gaia Parallax (mas)' + prior_cells(parallax_prior) + r'\\' + '\n' +
